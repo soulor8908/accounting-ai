@@ -3,7 +3,6 @@ import { Engine } from '../../../src/core/engine/engine';
 import { MemoryStorage, Store } from '../../../src/core/store/store';
 
 const NOW = new Date(2026, 6, 24, 15, 30);
-const TODAY = '2026-07-24';
 
 function setup(multiAsset = false) {
   const store = new Store(new MemoryStorage());
@@ -200,7 +199,7 @@ describe('查询', () => {
   });
 
   it('月度汇总：这个月花了多少', () => {
-    const { engine, store } = setup(true);
+    const { engine } = setup(true);
     engine.handle('用招行储蓄卡打车30');
     const r = engine.handle('这个月花了多少');
     expect(r.status).toBe('ok');
