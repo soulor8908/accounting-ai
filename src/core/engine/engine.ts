@@ -157,7 +157,7 @@ export class Engine {
     ctx: { clarifyUsed: boolean; forceConfirm: boolean },
   ): EngineResult {
     if (this.store.state.accounts.length === 0) {
-      return { status: 'error', message: '还没有任何账户，请先创建账户（如"添加微信零钱"）' };
+      return { status: 'error', message: '还没有任何账户，请到「账户」标签页先创建一个账户（如微信零钱、储蓄卡）' };
     }
     const picked = this.pickAssetAccount(intent.accountHint, ctx.clarifyUsed, intent, 'first');
     if (picked.result) return picked.result;

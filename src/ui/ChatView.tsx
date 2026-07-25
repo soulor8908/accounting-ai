@@ -11,12 +11,24 @@ interface ChatMessage {
 
 const SAMPLES = ['中午吃了碗面25', '3k工资到账', '微信还有多少余额', '这个月花了多少'];
 
+// 模块级缓存：保留聊天历史，避免切换 Tab 时丢失
+const INITIAL_MESSAGE: ChatMessage = { role: 'ai', text: '你好，我是记账助手。直接说「吃午饭25」就能记账。' };
+let cachedMessages: ChatMessage[] = [INITIAL_MESSAGE];
+
+/** 清空聊天历史（清空数据时调用） */
+export function resetChatHistory() {
+  cachedMessages = [INITIAL_MESSAGE];
+}
+
 export function ChatView({ onChanged }: { onChanged: () => void }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'ai', text: '你好，我是记账助手。直接说「吃午饭25」就能记账。' },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages);
   const [input, setInput] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
+
+  // 同步到模块级缓存
+  useEffect(() => {
+    cachedMessages = messages;
+  }, [messages]);
 
   useEffect(() => {
     const el = listRef.current;

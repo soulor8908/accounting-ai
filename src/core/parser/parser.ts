@@ -209,8 +209,8 @@ export function parse(text: string, now: Date): Intent {
     }
   }
 
-  // 还款
-  if (/^还|还了|还款/.test(input) && REPAY_TARGET.test(input)) {
+  // 还款：含“还”且出现还款目标关键词（排除“还有/还剩”等查询场景）
+  if (/还/.test(input) && !/还有|还剩/.test(input) && REPAY_TARGET.test(input)) {
     const target = REPAY_TARGET.exec(input)?.[1];
     return {
       kind: 'repayment',

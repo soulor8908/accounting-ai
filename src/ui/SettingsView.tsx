@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
 import { isValidStateShape } from '../core/store/store';
 import { store } from './appState';
+import { resetChatHistory } from './ChatView';
 
 export function SettingsView({ onChanged }: { onChanged: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -37,6 +38,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
   const clearAll = () => {
     if (window.confirm('确定清空全部数据？此操作不可恢复，建议先导出备份。')) {
       store.clearAll();
+      resetChatHistory();
       onChanged();
       setMessage('已清空全部数据');
     }
