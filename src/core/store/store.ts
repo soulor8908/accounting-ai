@@ -85,6 +85,19 @@ export const LARGE_AMOUNT_THRESHOLD = 50000;
 
 const ASSET_TYPES: AccountType[] = ['wallet', 'alipay', 'cash', 'debit'];
 
+/** 校验持久化/导入数据的最小形状，防止损坏数据污染状态 */
+export function isValidStateShape(state: unknown): state is AppState {
+  if (!state || typeof state !== 'object') return false;
+  const s = state as Partial<AppState>;
+  return (
+    s.schemaVersion === SCHEMA_VERSION &&
+    Array.isArray(s.accounts) &&
+    Array.isArray(s.transactions) &&
+    Array.isArray(s.installmentPlans) &&
+    Array.isArray(s.recurringRules)
+  );
+}
+
 // ---------- 撤销 ----------
 interface AccountDelta {
   accountId: string;
@@ -192,8 +205,7 @@ export class Store {
 
   /** 模糊匹配账户名：hint 与 name 互相包含（剥离常见后缀） */
   resolveAccounts(hint: string): Account[] {
-    const norm = (s: string) =>
-      s.toLowerCase().replace(/[卡账户的零钱余额\s]/g, '').replace(/储蓄|借记|信用/g, (m) => m); // 保留类型词参与匹配
+    const norm = (s: string) => s.toLowerCase().replace(/[卡账户的零钱余额\s]/g, '');
     const h = norm(hint);
     if (!h) return [];
     const scored: Array<{ acc: Account; score: number }> = [];
@@ -382,15 +394,9 @@ export class Store {
   private applyLoanRepayment(loan: Account, amount: number): void {
     const meta = loan.meta as LoanMeta;
     const r = meta.annualRate / 12;
-    let principalPart: number;
-    if (meta.repaymentMethod === 'interest_only') {
-      // 先息后本：只有末期才还本金；简化为超出利息部分冲减本金
-      const interest = round2(loan.balance * r);
-      principalPart = Math.max(0, round2(amount - interest));
-    } else {
-      const interest = round2(loan.balance * r);
-      principalPart = Math.max(0, round2(amount - interest));
-    }
+    // 先扣除当期利息，剩余部分冲减本金（先息后本/等额方式一致处理）
+    const interest = round2(loan.balance * r);
+    const principalPart = Math.max(0, round2(amount - interest));
     loan.balance = Math.max(0, subMoney(loan.balance, principalPart));
     meta.paidMonths += 1;
     if (loan.balance > 0) {
@@ -487,7 +493,7 @@ export class Store {
     return rule;
   }
 
-  /** 生成所有到期未生成的周期流水（每条规则最多补 24 期） */
+  /** 生成所有到期未生成的周期流水（每条规则最多向前补 36 期） */
   generateDueRecurring(upToDate: string): Transaction[] {
     const generated: Transaction[] = [];
     for (const rule of this.state.recurringRules) {
@@ -655,9 +661,9 @@ export class Store {
     if (!raw) return false;
     try {
       const payload = JSON.parse(raw) as PersistedShape;
-      if (!payload.state || payload.state.schemaVersion !== SCHEMA_VERSION) return false;
+      if (!isValidStateShape(payload.state)) return false;
       this.state = payload.state;
-      this.undoStack = payload.undoStack ?? [];
+      this.undoStack = Array.isArray(payload.undoStack) ? payload.undoStack : [];
       return true;
     } catch {
       return false;

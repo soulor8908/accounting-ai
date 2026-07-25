@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
+import { isValidStateShape } from '../core/store/store';
 import { store } from './appState';
 
 export function SettingsView({ onChanged }: { onChanged: () => void }) {
@@ -19,9 +20,9 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
 
   const importData = async (file: File) => {
     try {
-      const parsed = JSON.parse(await file.text());
-      if (!parsed || !Array.isArray(parsed.accounts) || !Array.isArray(parsed.transactions)) {
-        setMessage('文件格式不正确');
+      const parsed: unknown = JSON.parse(await file.text());
+      if (!isValidStateShape(parsed)) {
+        setMessage('文件格式不正确或版本不兼容');
         return;
       }
       store.state = parsed;

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { Store, ValidationError, MemoryStorage } from '../../../src/core/store/store';
+import { Store, ValidationError, MemoryStorage, isValidStateShape } from '../../../src/core/store/store';
 import type { Account } from '../../../src/core/types';
 
 const TODAY = '2026-07-24';
@@ -398,5 +398,22 @@ describe('周期性记账', () => {
     store.generateDueRecurring(TODAY);
     const again = store.generateDueRecurring(TODAY);
     expect(again).toHaveLength(0);
+  });
+});
+
+describe('数据形状校验', () => {
+  it('损坏的持久化数据 → load 拒绝', () => {
+    const storage = new MemoryStorage();
+    storage.setItem('accounting-ai:state:v1', JSON.stringify({ state: { schemaVersion: 1, accounts: 'oops' } }));
+    const store = new Store(storage);
+    expect(store.load()).toBe(false);
+    expect(store.state.accounts).toHaveLength(0);
+  });
+
+  it('isValidStateShape 边界', () => {
+    expect(isValidStateShape(null)).toBe(false);
+    expect(isValidStateShape({})).toBe(false);
+    expect(isValidStateShape({ schemaVersion: 999, accounts: [], transactions: [], installmentPlans: [], recurringRules: [] })).toBe(false);
+    expect(isValidStateShape({ schemaVersion: 1, accounts: [], transactions: [], installmentPlans: [], recurringRules: [] })).toBe(true);
   });
 });

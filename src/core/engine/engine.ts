@@ -8,7 +8,7 @@ import { formatDate } from '../parser/dateParser';
 import { type Intent, parse } from '../parser/parser';
 import { addMonthsClamped } from '../finance/loan';
 import { Store, ValidationError } from '../store/store';
-import type { Account, AccountType } from '../types';
+import type { Account, AccountType, Transaction } from '../types';
 import { round2 } from '../utils/money';
 
 export type EngineStatus = 'ok' | 'error' | 'clarify' | 'confirm';
@@ -361,7 +361,7 @@ export class Engine {
     intent: Intent,
     ctx: { clarifyUsed: boolean; forceConfirm: boolean },
     input: Parameters<Store['applyTransaction']>[0],
-    onOk: (tx: import('../types').Transaction) => string,
+    onOk: (tx: Transaction) => string,
   ): EngineResult {
     try {
       const { tx, warnings } = this.store.applyTransaction(input, { confirm: ctx.forceConfirm });
