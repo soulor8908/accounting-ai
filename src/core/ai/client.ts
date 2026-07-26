@@ -9,7 +9,7 @@
  */
 import type { AIConfig } from './config';
 import { AI_TOOLS, executeTool, type ToolCall, type ToolResult } from './tools';
-import { store } from '../../ui/appState';
+import { store, memoryStore } from '../../ui/appState';
 import { formatMoney } from '../engine/engine';
 import type { Account } from '../types';
 
@@ -37,6 +37,11 @@ function buildSystemPrompt(): string {
   const totalAssets = formatMoney(store.getTotalAssets());
   const totalLiabilities = formatMoney(store.getTotalLiabilities());
 
+  const memories = memoryStore.list();
+  const memoryBlock = memories.length > 0
+    ? memories.map((m) => `  - [${m.category}${m.source === 'auto' ? '/自动' : ''}] ${m.content}`).join('\n')
+    : '  （暂无记忆）';
+
   return `你是一个智能记账助手。用户可以通过自然语言让你帮他记账、查询、编辑和删除数据。
 
 当前日期：${today}
@@ -46,8 +51,12 @@ function buildSystemPrompt(): string {
 账户列表：
 ${accounts}
 
+关于用户的记忆（长期偏好/事实/习惯，请在回复时自然运用）：
+${memoryBlock}
+
 你可以调用工具来完成用户的请求。如果用户的话不够明确，可以先用 list_transactions 或 query_balance 查看当前数据后再操作。
 重要：执行 delete_transaction 删除流水时，必须先用 descriptionKeyword 或 id 查清楚，删除前在回复中向用户确认。
+用户可能让你查看/添加/修改/删除记忆（如「你记得我什么」「记住我喜欢…」「忘掉那条」），使用 list_memories / add_memory / update_memory / delete_memory 工具，删除记忆前同样需要先向用户确认。
 回复请简洁，用中文。金额用 ¥ 符号。`;
 }
 

@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../../src/App';
-import { store } from '../../src/ui/appState';
+import { chatStore, memoryStore, store } from '../../src/ui/appState';
 
 describe('App 冒烟', () => {
   beforeEach(() => {
     cleanup();
     store.clearAll();
+    memoryStore.clearAll();
+    chatStore.clearAll();
   });
 
   it('渲染主界面与导航', () => {

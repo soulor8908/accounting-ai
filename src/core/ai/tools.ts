@@ -3,8 +3,9 @@
  * 让 AI 能通过工具调用完成记账操作
  */
 import { formatMoney } from '../engine/engine';
-import { store } from '../../ui/appState';
+import { store, memoryStore } from '../../ui/appState';
 import { ValidationError } from '../store/store';
+import type { MemoryCategory } from '../store/memory';
 import type { Account, AccountType, Transaction, TxType } from '../types';
 
 export interface ToolCall {
@@ -147,6 +148,78 @@ export const AI_TOOLS = [
       parameters: { type: 'object', properties: {} },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_memories',
+      description: '查看 AI 记忆。记忆包含用户的长期偏好、事实、行为习惯，可按类型筛选。用户问「你记得我什么」「我的偏好」时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            enum: ['fact', 'habit', 'preference'],
+            description: '记忆类型（可选）：fact=事实，habit=行为习惯，preference=偏好',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'add_memory',
+      description: '添加一条 AI 记忆。当用户主动说「记住我喜欢…」「以后记住…」或透露长期偏好/事实时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: '记忆内容，简洁陈述句，如「偏好用微信零钱支付」' },
+          category: {
+            type: 'string',
+            enum: ['fact', 'habit', 'preference'],
+            description: '记忆类型（默认 fact）',
+          },
+        },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_memory',
+      description: '修改已有记忆的内容。用户说「把那条记忆改成…」时，先按关键词查到 id 再调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '记忆ID（可选）' },
+          keyword: { type: 'string', description: '内容关键词（可选，用于模糊查找）' },
+          newContent: { type: 'string', description: '新内容' },
+          newCategory: {
+            type: 'string',
+            enum: ['fact', 'habit', 'preference'],
+            description: '新类型（可选）',
+          },
+        },
+        required: ['newContent'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_memory',
+      description: '删除指定记忆。用户说「忘掉…」「删除那条记忆」时调用。建议先列出确认后再删。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '记忆ID（可选）' },
+          keyword: { type: 'string', description: '内容关键词（可选，用于模糊查找）' },
+          confirm: { type: 'boolean', description: '是否确认执行删除（首次应为 false，返回预览；确认后传 true）' },
+        },
+      },
+    },
+  },
 ];
 
 const TX_TYPE_LABEL: Record<string, string> = {
@@ -182,6 +255,14 @@ export function executeTool(call: ToolCall): ToolResult {
         return execAddAccount(call.arguments);
       case 'list_accounts':
         return execListAccounts();
+      case 'list_memories':
+        return execListMemories(call.arguments);
+      case 'add_memory':
+        return execAddMemory(call.arguments);
+      case 'update_memory':
+        return execUpdateMemory(call.arguments);
+      case 'delete_memory':
+        return execDeleteMemory(call.arguments);
       default:
         return { name: call.name, result: `未知工具: ${call.name}`, success: false };
     }
@@ -380,4 +461,99 @@ function execListAccounts(): ToolResult {
   if (store.state.accounts.length === 0) return { name: 'list_accounts', result: '还没有任何账户', success: true };
   const lines = store.state.accounts.map((a: Account) => `「${a.name}」（${a.type}）余额 ¥${formatMoney(a.balance)}`);
   return { name: 'list_accounts', result: lines.join('；'), success: true };
+}
+
+const MEMORY_CATEGORY_LABEL: Record<MemoryCategory, string> = {
+  fact: '事实',
+  habit: '习惯',
+  preference: '偏好',
+};
+
+function execListMemories(args: Record<string, unknown>): ToolResult {
+  const category = args.category as MemoryCategory | undefined;
+  const memories = category ? memoryStore.listByCategory(category) : memoryStore.list();
+  if (memories.length === 0) {
+    return {
+      name: 'list_memories',
+      result: category ? `没有${MEMORY_CATEGORY_LABEL[category]}类记忆` : '暂无任何记忆',
+      success: true,
+    };
+  }
+  const lines = memories.map(
+    (m) => `[${MEMORY_CATEGORY_LABEL[m.category]}${m.source === 'auto' ? '/自动' : ''}] ${m.content}（id=${m.id}）`,
+  );
+  return { name: 'list_memories', result: `共 ${memories.length} 条记忆：\n${lines.join('\n')}`, success: true };
+}
+
+function execAddMemory(args: Record<string, unknown>): ToolResult {
+  const content = (args.content as string | undefined)?.trim();
+  if (!content) return { name: 'add_memory', result: '记忆内容不能为空', success: false };
+  const category = (args.category as MemoryCategory | undefined) ?? 'fact';
+  // 去重：与已有记忆相似则提示
+  if (memoryStore.hasSimilar(content)) {
+    return { name: 'add_memory', result: `已存在相似记忆，未重复添加：「${content}」`, success: true };
+  }
+  const m = memoryStore.add({ content, category, source: 'manual' });
+  return {
+    name: 'add_memory',
+    result: `已记住（${MEMORY_CATEGORY_LABEL[m.category]}）：${m.content}`,
+    success: true,
+  };
+}
+
+function execUpdateMemory(args: Record<string, unknown>): ToolResult {
+  const id = args.id as string | undefined;
+  const keyword = args.keyword as string | undefined;
+  const newContent = (args.newContent as string | undefined)?.trim();
+  const newCategory = args.newCategory as MemoryCategory | undefined;
+
+  if (!newContent) return { name: 'update_memory', result: '新内容不能为空', success: false };
+
+  let targetId = id;
+  if (!targetId && keyword) {
+    const found = memoryStore.list().filter((m) => m.content.includes(keyword));
+    if (found.length === 0) return { name: 'update_memory', result: `没找到包含「${keyword}」的记忆`, success: false };
+    if (found.length > 1) {
+      const preview = found.slice(0, 5).map((m) => `${m.content}（id=${m.id}）`).join('\n');
+      return { name: 'update_memory', result: `找到 ${found.length} 条，请提供更精确的信息：\n${preview}`, success: false };
+    }
+    targetId = found[0].id;
+  }
+  if (!targetId) return { name: 'update_memory', result: '请提供记忆ID或关键词', success: false };
+
+  const patch: { content?: string; category?: MemoryCategory } = { content: newContent };
+  if (newCategory) patch.category = newCategory;
+  const m = memoryStore.update(targetId, patch);
+  if (!m) return { name: 'update_memory', result: `没找到ID为 ${targetId} 的记忆`, success: false };
+  return { name: 'update_memory', result: `已更新记忆：${m.content}`, success: true };
+}
+
+function execDeleteMemory(args: Record<string, unknown>): ToolResult {
+  const id = args.id as string | undefined;
+  const keyword = args.keyword as string | undefined;
+  const confirm = args.confirm === true;
+
+  let target = id ? memoryStore.get(id) : undefined;
+  if (!target && keyword) {
+    const found = memoryStore.list().filter((m) => m.content.includes(keyword));
+    if (found.length === 0) return { name: 'delete_memory', result: `没找到包含「${keyword}」的记忆`, success: false };
+    if (found.length > 1) {
+      const preview = found.slice(0, 5).map((m) => `${m.content}（id=${m.id}）`).join('\n');
+      return { name: 'delete_memory', result: `找到 ${found.length} 条，请提供更精确的信息：\n${preview}`, success: false };
+    }
+    target = found[0];
+  }
+  if (!target) return { name: 'delete_memory', result: '请提供记忆ID或关键词', success: false };
+
+  if (!confirm) {
+    return {
+      name: 'delete_memory',
+      result: `即将删除记忆：「${target.content}」（id=${target.id}）。请向用户确认后，带 confirm=true 再次调用以执行删除。`,
+      success: true,
+    };
+  }
+
+  const removed = memoryStore.remove(target.id);
+  if (!removed) return { name: 'delete_memory', result: '删除失败：记忆已不存在', success: false };
+  return { name: 'delete_memory', result: `已删除记忆：「${removed.content}」`, success: true };
 }

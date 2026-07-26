@@ -2,7 +2,9 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { type EngineResult, formatMoney } from '../core/engine/engine';
 import { type AIConfig, defaultConfig, loadAIConfig } from '../core/ai/config';
 import { type ChatMessage as AIMessage, chatWithAI } from '../core/ai/client';
-import { engine, store } from './appState';
+import { extractHabit } from '../core/ai/habits';
+import { chatStore, engine, memoryStore, store } from './appState';
+import type { ChatMessageRecord } from '../core/store/chatStore';
 
 interface ChatMessage {
   role: 'user' | 'ai';
@@ -16,43 +18,104 @@ interface ChatMessage {
 const SAMPLES = ['中午吃了碗面25', '3k工资到账', '微信还有多少余额', '这个月花了多少'];
 
 const INITIAL_MESSAGE: ChatMessage = { role: 'ai', text: '你好，我是记账助手。直接说「吃午饭25」就能记账，也可以问我「这个月花了多少」。' };
-let cachedMessages: ChatMessage[] = [INITIAL_MESSAGE];
 
-export function resetChatHistory() {
-  cachedMessages = [INITIAL_MESSAGE];
+/** UI 消息 → 持久化记录（剥离 streaming，归一化瞬态 status） */
+function toRecord(m: ChatMessage): Omit<ChatMessageRecord, 'id' | 'createdAt'> {
+  const persistableStatus =
+    m.status === 'ok' || m.status === 'error' || m.status === 'confirm' ? m.status : undefined;
+  return { role: m.role, text: m.text, status: persistableStatus, options: m.options };
 }
 
-// 转换为 AI API 的历史消息格式
-function toAIMessages(messages: ChatMessage[]): AIMessage[] {
-  return messages
-    .filter((m) => m.role === 'user' || (m.role === 'ai' && m.text))
-    .slice(-10) // 只取最近10条，控制 token
-    .map((m) => ({
-      role: m.role === 'user' ? 'user' : 'assistant',
-      content: m.text,
-    }));
+/** 持久化记录 → UI 消息 */
+function fromRecord(r: ChatMessageRecord): ChatMessage {
+  return { role: r.role, text: r.text, status: r.status, options: r.options };
+}
+
+/** 把当前 UI 消息列表写入会话（空列表不写，保留 welcome 为虚拟消息） */
+function persistSession(sessionId: string, messages: ChatMessage[]): void {
+  // 过滤掉纯 welcome 的初始消息（避免历史里堆积 greet）
+  const real = messages.filter((m) => !(m === INITIAL_MESSAGE));
+  chatStore.setMessages(sessionId, real.map(toRecord));
+}
+
+/** 从会话记录恢复 UI 消息列表（空会话补 welcome） */
+function loadSessionMessages(sessionId: string): ChatMessage[] {
+  const s = chatStore.get(sessionId);
+  if (!s || s.messages.length === 0) return [INITIAL_MESSAGE];
+  return s.messages.map(fromRecord);
+}
+
+/** AI 回复完成后，从最近一条用户消息提取行为习惯并保存为 auto 记忆 */
+function captureHabit(messages: ChatMessage[]): void {
+  // 找到最后一条用户消息
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user' && m.text);
+  if (!lastUser) return;
+  const habit = extractHabit(lastUser.text);
+  if (!habit) return;
+  if (memoryStore.hasSimilar(habit.content)) return;
+  memoryStore.add({ content: habit.content, category: habit.category, source: 'auto' });
+}
+
+/**
+ * 重置当前聊天为全新会话（保留历史，仅切换到新会话）。
+ * 兼容旧调用点（SettingsView 在 AI 配置变更 / 清空数据后调用）。
+ */
+export function resetChatHistory(): void {
+  chatStore.create();
 }
 
 export function ChatView({ onChanged }: { onChanged: () => void }) {
-  const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages);
+  // 启动时确保有 active 会话
+  const initialSession = chatStore.getActive() ?? chatStore.create();
+  const [activeSessionId, setActiveSessionId] = useState<string>(initialSession.id);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadSessionMessages(initialSession.id));
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [aiConfig, setAIConfig] = useState<AIConfig | null>(null);
   const [samplesOpen, setSamplesOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    cachedMessages = messages;
-  }, [messages]);
+    setAIConfig(loadAIConfig() ?? defaultConfig());
+  }, []);
 
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  useEffect(() => {
-    setAIConfig(loadAIConfig() ?? defaultConfig());
-  }, []);
+  // 切换会话
+  const switchSession = (id: string) => {
+    chatStore.setActive(id);
+    setActiveSessionId(id);
+    setMessages(loadSessionMessages(id));
+    setSessionsOpen(false);
+  };
+
+  // 新建会话
+  const newChat = () => {
+    const s = chatStore.create();
+    setActiveSessionId(s.id);
+    setMessages([INITIAL_MESSAGE]);
+    setSessionsOpen(false);
+    onChanged();
+  };
+
+  // 删除会话
+  const deleteSession = (id: string) => {
+    const s = chatStore.get(id);
+    if (!s) return;
+    if (!window.confirm(`确定删除会话「${s.title}」？此操作不可恢复。`)) return;
+    chatStore.remove(id);
+    // 如果删的是当前会话，切到新的或第一个
+    if (id === activeSessionId) {
+      const next = chatStore.getActive() ?? chatStore.create();
+      setActiveSessionId(next.id);
+      setMessages(loadSessionMessages(next.id));
+    }
+    onChanged();
+  };
 
   const pushAI = (text: string, status: ChatMessage['status'] = 'ai') => {
     setMessages((ms) => [...ms, { role: 'ai', text, status }]);
@@ -91,6 +154,9 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
       if (last?.role === 'ai') {
         copy[copy.length - 1] = { ...last, streaming: false };
       }
+      // 落库 + 习惯提取
+      persistSession(activeSessionId, copy);
+      captureHabit(copy);
       return copy;
     });
     onChanged();
@@ -100,7 +166,10 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
     const t = text.trim();
     if (!t || loading) return;
     setInput('');
-    setMessages((ms) => [...ms, { role: 'user', text: t }]);
+    const userMsg: ChatMessage = { role: 'user', text: t };
+    const next = [...messages, userMsg];
+    setMessages(next);
+    persistSession(activeSessionId, next);
     setLoading(true);
 
     // 优先使用 AI
@@ -147,6 +216,7 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
                 status: result.success ? 'ok' : 'error',
               };
             }
+            persistSession(activeSessionId, copy);
             return copy;
           });
           onChanged();
@@ -169,6 +239,7 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
             } else {
               copy.push({ role: 'ai', text: `⚠️ ${error}`, status: 'error' });
             }
+            persistSession(activeSessionId, copy);
             return copy;
           });
         },
@@ -179,7 +250,10 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
 
     // Fallback: 本地引擎
     const r = engine.handle(t);
-    setMessages((ms) => [...ms, { role: 'ai', text: r.message, status: r.status, options: r.clarifyOptions }]);
+    const finalMsgs = [...next, { role: 'ai' as const, text: r.message, status: r.status as ChatMessage['status'], options: r.clarifyOptions }];
+    setMessages(finalMsgs);
+    persistSession(activeSessionId, finalMsgs);
+    captureHabit(finalMsgs);
     onChanged();
     setLoading(false);
   };
@@ -191,20 +265,30 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
 
   // 本地引擎的确认/取消
   const handleLocalConfirm = () => {
-    setMessages((ms) => [...ms, { role: 'user', text: '确认' }]);
+    const userMsg: ChatMessage = { role: 'user', text: '确认' };
+    const next = [...messages, userMsg];
+    setMessages(next);
     const r = engine.confirmPending();
-    setMessages((ms) => [...ms, { role: 'ai', text: r.message, status: r.status }]);
+    const finalMsgs = [...next, { role: 'ai' as const, text: r.message, status: r.status as ChatMessage['status'] }];
+    setMessages(finalMsgs);
+    persistSession(activeSessionId, finalMsgs);
     onChanged();
   };
 
   const handleLocalCancel = () => {
-    setMessages((ms) => [...ms, { role: 'user', text: '取消' }]);
+    const userMsg: ChatMessage = { role: 'user', text: '取消' };
+    const next = [...messages, userMsg];
+    setMessages(next);
     const r = engine.cancelPending();
-    setMessages((ms) => [...ms, { role: 'ai', text: r.message, status: r.status }]);
+    const finalMsgs = [...next, { role: 'ai' as const, text: r.message, status: r.status as ChatMessage['status'] }];
+    setMessages(finalMsgs);
+    persistSession(activeSessionId, finalMsgs);
   };
 
   const totalAssets = store.getTotalAssets();
   const totalLiabilities = store.getTotalLiabilities();
+  const sessions = chatStore.list();
+  const activeSession = chatStore.get(activeSessionId);
 
   return (
     <div className="chat-view">
@@ -218,6 +302,56 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
           <span className="overview-value negative">¥{formatMoney(totalLiabilities)}</span>
         </div>
       </div>
+
+      {/* 会话工具栏：切换 / 标题 / 新建 */}
+      <div className="chat-toolbar">
+        <button
+          type="button"
+          className="chat-toolbar-btn"
+          aria-expanded={sessionsOpen}
+          aria-label="会话列表"
+          onClick={() => setSessionsOpen((v) => !v)}
+        >
+          ☰
+        </button>
+        <span className="chat-title" title={activeSession?.title}>{activeSession?.title ?? '对话'}</span>
+        <button type="button" className="chat-toolbar-btn" aria-label="新建聊天" onClick={newChat} disabled={loading}>
+          ＋
+        </button>
+      </div>
+      {sessionsOpen && (
+        <div className="chat-sessions">
+          {sessions.length === 0 && <div className="empty">暂无会话</div>}
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              className={`chat-session-item ${s.id === activeSessionId ? 'active' : ''}`}
+              onClick={() => switchSession(s.id)}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="chat-session-main">
+                <div className="chat-session-title">{s.title || '新对话'}</div>
+                <div className="chat-session-meta">
+                  {s.messages.length} 条消息 · {new Date(s.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="chat-session-del"
+                aria-label="删除会话"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteSession(s.id);
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="chat-list" ref={listRef}>
         {messages.map((m, i) => (
           <div key={i} className={`bubble-row ${m.role}`}>
@@ -281,4 +415,15 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
       </div>
     </div>
   );
+}
+
+// 转换为 AI API 的历史消息格式
+function toAIMessages(messages: ChatMessage[]): AIMessage[] {
+  return messages
+    .filter((m) => m.role === 'user' || (m.role === 'ai' && m.text))
+    .slice(-10) // 只取最近10条，控制 token
+    .map((m) => ({
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: m.text,
+    }));
 }

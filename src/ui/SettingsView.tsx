@@ -3,9 +3,22 @@ import { formatMoney } from '../core/engine/engine';
 import { AI_PROVIDERS, type AIConfig, clearAIConfig, defaultConfig, loadAIConfig, saveAIConfig } from '../core/ai/config';
 import { testAIConfig } from '../core/ai/client';
 import { isValidStateShape } from '../core/store/store';
+import type { MemoryCategory } from '../core/store/memory';
 import { isVaultEnabled, lock } from '../core/security/vault';
-import { store } from './appState';
+import { chatStore, memoryStore, store } from './appState';
 import { resetChatHistory } from './ChatView';
+
+const MEMORY_CATEGORY_OPTIONS: Array<{ value: MemoryCategory; label: string }> = [
+  { value: 'fact', label: '事实' },
+  { value: 'habit', label: '习惯' },
+  { value: 'preference', label: '偏好' },
+];
+
+const MEMORY_CATEGORY_LABEL: Record<MemoryCategory, string> = {
+  fact: '事实',
+  habit: '习惯',
+  preference: '偏好',
+};
 
 export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onLock?: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -17,6 +30,18 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
   const [aiMessage, setAIMessage] = useState('');
   const [aiMessageKind, setAIMessageKind] = useState<'info' | 'error' | 'success'>('info');
   const [testing, setTesting] = useState(false);
+
+  // 记忆管理
+  const [memVersion, setMemVersion] = useState(0);
+  const bumpMem = () => setMemVersion((v) => v + 1);
+  const [newMemContent, setNewMemContent] = useState('');
+  const [newMemCategory, setNewMemCategory] = useState<MemoryCategory>('fact');
+  const [editingMemId, setEditingMemId] = useState<string | null>(null);
+  const [editMemContent, setEditMemContent] = useState('');
+  const [editMemCategory, setEditMemCategory] = useState<MemoryCategory>('fact');
+  // 每次渲染读取最新记忆（memVersion 仅用于触发重渲染）
+  void memVersion;
+  const memories = memoryStore.list();
 
   const onProviderChange = (providerId: string) => {
     const preset = AI_PROVIDERS.find((p) => p.id === providerId);
@@ -103,10 +128,71 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
   const clearAll = () => {
     if (window.confirm('确定清空全部数据？此操作不可恢复，建议先导出备份。')) {
       store.clearAll();
+      memoryStore.clearAll();
+      chatStore.clearAll();
       resetChatHistory();
       onChanged();
       setMessage('已清空全部数据');
     }
+  };
+
+  // ---------- 记忆管理 ----------
+  const addMemory = (e: FormEvent) => {
+    e.preventDefault();
+    const content = newMemContent.trim();
+    if (!content) return;
+    memoryStore.add({ content, category: newMemCategory, source: 'manual' });
+    setNewMemContent('');
+    bumpMem();
+    onChanged();
+  };
+
+  const startEditMemory = (id: string, content: string, category: MemoryCategory) => {
+    setEditingMemId(id);
+    setEditMemContent(content);
+    setEditMemCategory(category);
+  };
+
+  const saveEditMemory = () => {
+    if (!editingMemId) return;
+    const content = editMemContent.trim();
+    if (!content) return;
+    memoryStore.update(editingMemId, { content, category: editMemCategory });
+    setEditingMemId(null);
+    setEditMemContent('');
+    bumpMem();
+    onChanged();
+  };
+
+  const cancelEditMemory = () => {
+    setEditingMemId(null);
+    setEditMemContent('');
+  };
+
+  const deleteMemory = (id: string, content: string) => {
+    if (!window.confirm(`确定删除记忆「${content}」？`)) return;
+    memoryStore.remove(id);
+    bumpMem();
+    onChanged();
+  };
+
+  const clearAllMemories = () => {
+    if (memories.length === 0) return;
+    if (!window.confirm(`确定清空全部 ${memories.length} 条记忆？此操作不可恢复。`)) return;
+    memoryStore.clearAll();
+    bumpMem();
+    onChanged();
+    setMessage('已清空全部记忆');
+  };
+
+  const clearAllChats = () => {
+    const sessions = chatStore.list();
+    if (sessions.length === 0) return;
+    if (!window.confirm(`确定清空全部 ${sessions.length} 个聊天会话？此操作不可恢复。`)) return;
+    chatStore.clearAll();
+    resetChatHistory();
+    onChanged();
+    setMessage('已清空全部聊天记录');
   };
 
   const currentPreset = AI_PROVIDERS.find((p) => p.id === aiConfig.providerId);
@@ -186,6 +272,86 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
         </p>
       </form>
 
+      <h3>AI 记忆（{memories.length} 条）</h3>
+      <p className="meta">AI 会记住你的长期偏好、事实和行为习惯，并在对话中运用。也可在对话里直接说「你记得我什么」「记住我喜欢…」「忘掉那条」来管理。</p>
+      <form className="memory-form" onSubmit={addMemory}>
+        <input
+          type="text"
+          value={newMemContent}
+          onChange={(e) => setNewMemContent(e.target.value)}
+          placeholder="添加一条记忆，如「偏好用微信零钱支付」"
+          aria-label="记忆内容"
+          maxLength={200}
+        />
+        <select
+          value={newMemCategory}
+          onChange={(e) => setNewMemCategory(e.target.value as MemoryCategory)}
+          aria-label="记忆类型"
+        >
+          {MEMORY_CATEGORY_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <button type="submit" disabled={!newMemContent.trim()}>添加</button>
+      </form>
+      <ul className="memory-list">
+        {memories.length === 0 && <li className="empty">暂无记忆，可在上方添加或在对话中让 AI 自动记录</li>}
+        {memories.map((m) => (
+          <li key={m.id} className="memory-item">
+            {editingMemId === m.id ? (
+              <div className="memory-edit-form">
+                <input
+                  type="text"
+                  value={editMemContent}
+                  onChange={(e) => setEditMemContent(e.target.value)}
+                  aria-label="编辑记忆内容"
+                  maxLength={200}
+                  autoFocus
+                />
+                <select
+                  value={editMemCategory}
+                  onChange={(e) => setEditMemCategory(e.target.value as MemoryCategory)}
+                  aria-label="编辑记忆类型"
+                >
+                  {MEMORY_CATEGORY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <div className="edit-actions">
+                  <button type="button" className="btn-primary-sm" onClick={saveEditMemory}>保存</button>
+                  <button type="button" className="btn-sm" onClick={cancelEditMemory}>取消</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="memory-main">
+                  <span className={`memory-tag cat-${m.category}`}>{MEMORY_CATEGORY_LABEL[m.category]}</span>
+                  {m.source === 'auto' && <span className="memory-tag auto">自动</span>}
+                  <span className="memory-content">{m.content}</span>
+                </div>
+                <div className="memory-actions">
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    onClick={() => startEditMemory(m.id, m.content, m.category)}
+                  >编辑</button>
+                  <button
+                    type="button"
+                    className="btn-sm danger"
+                    onClick={() => deleteMemory(m.id, m.content)}
+                  >删除</button>
+                </div>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      {memories.length > 0 && (
+        <div className="settings-actions">
+          <button type="button" className="danger" onClick={clearAllMemories}>清空全部记忆</button>
+        </div>
+      )}
+
       <h3>分期计划</h3>
       <ul className="plan-list">
         {store.state.installmentPlans.length === 0 && <li className="empty">暂无分期计划</li>}
@@ -234,6 +400,9 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
             e.target.value = '';
           }}
         />
+        <button type="button" className="danger" onClick={clearAllChats}>
+          清空聊天记录
+        </button>
         <button type="button" className="danger" onClick={clearAll}>
           清空全部数据
         </button>

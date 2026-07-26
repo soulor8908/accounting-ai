@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { executeTool, AI_TOOLS } from '../../../src/core/ai/tools';
-import { store } from '../../../src/ui/appState';
+import { memoryStore, store } from '../../../src/ui/appState';
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -8,12 +8,13 @@ function todayStr(): string {
 
 function seed() {
   store.clearAll();
+  memoryStore.clearAll();
   store.addAccount({ name: '微信零钱', type: 'wallet', balance: 1000 });
   store.addAccount({ name: '招行信用卡', type: 'credit', balance: 0, meta: { kind: 'credit', limit: 30000, billDay: 5, dueDay: 23 } });
 }
 
 describe('AI tools 定义', () => {
-  it('包含 8 个工具', () => {
+  it('包含 12 个工具', () => {
     const names = AI_TOOLS.map((t) => t.function.name);
     expect(names).toEqual([
       'add_transaction',
@@ -24,6 +25,10 @@ describe('AI tools 定义', () => {
       'query_summary',
       'add_account',
       'list_accounts',
+      'list_memories',
+      'add_memory',
+      'update_memory',
+      'delete_memory',
     ]);
   });
 
@@ -245,5 +250,92 @@ describe('executeTool - 未知工具', () => {
     const r = executeTool({ name: 'no_such_tool', arguments: {} });
     expect(r.success).toBe(false);
     expect(r.result).toContain('未知工具');
+  });
+});
+
+describe('executeTool - 记忆工具', () => {
+  beforeEach(seed);
+
+  it('add_memory 添加并去重', () => {
+    const r = executeTool({ name: 'add_memory', arguments: { content: '偏好用微信支付', category: 'preference' } });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('已记住');
+    expect(memoryStore.list()).toHaveLength(1);
+    // 重复添加相似内容不会新增
+    const r2 = executeTool({ name: 'add_memory', arguments: { content: '偏好用微信支付' } });
+    expect(r2.success).toBe(true);
+    expect(r2.result).toContain('已存在相似');
+    expect(memoryStore.list()).toHaveLength(1);
+  });
+
+  it('add_memory 空内容失败', () => {
+    const r = executeTool({ name: 'add_memory', arguments: { content: '   ' } });
+    expect(r.success).toBe(false);
+  });
+
+  it('list_memories 列出全部', () => {
+    executeTool({ name: 'add_memory', arguments: { content: '习惯午餐时间记账', category: 'habit' } });
+    executeTool({ name: 'add_memory', arguments: { content: '使用招行信用卡', category: 'preference' } });
+    const r = executeTool({ name: 'list_memories', arguments: {} });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('共 2 条');
+    expect(r.result).toContain('习惯午餐时间记账');
+    expect(r.result).toContain('使用招行信用卡');
+  });
+
+  it('list_memories 按类型筛选', () => {
+    executeTool({ name: 'add_memory', arguments: { content: '习惯午餐时间记账', category: 'habit' } });
+    executeTool({ name: 'add_memory', arguments: { content: '使用招行信用卡', category: 'preference' } });
+    const r = executeTool({ name: 'list_memories', arguments: { category: 'preference' } });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('使用招行信用卡');
+    expect(r.result).not.toContain('习惯午餐时间记账');
+  });
+
+  it('list_memories 空记忆', () => {
+    const r = executeTool({ name: 'list_memories', arguments: {} });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('暂无');
+  });
+
+  it('update_memory 按关键词更新', () => {
+    executeTool({ name: 'add_memory', arguments: { content: '偏好用微信支付' } });
+    const r = executeTool({
+      name: 'update_memory',
+      arguments: { keyword: '微信', newContent: '偏好用支付宝支付' },
+    });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('偏好用支付宝支付');
+    expect(memoryStore.list()[0].content).toBe('偏好用支付宝支付');
+  });
+
+  it('update_memory 多个匹配拒绝', () => {
+    executeTool({ name: 'add_memory', arguments: { content: '微信支付偏好' } });
+    executeTool({ name: 'add_memory', arguments: { content: '微信余额查询' } });
+    const r = executeTool({ name: 'update_memory', arguments: { keyword: '微信', newContent: 'x' } });
+    expect(r.success).toBe(false);
+    expect(r.result).toContain('2 条');
+  });
+
+  it('delete_memory 二次确认流程', () => {
+    executeTool({ name: 'add_memory', arguments: { content: '偏好用微信支付' } });
+    const memId = memoryStore.list()[0].id;
+    // 未确认：仅预览
+    const preview = executeTool({ name: 'delete_memory', arguments: { id: memId } });
+    expect(preview.success).toBe(true);
+    expect(preview.result).toContain('即将删除');
+    expect(memoryStore.list()).toHaveLength(1);
+    // 确认：执行删除
+    const confirmed = executeTool({ name: 'delete_memory', arguments: { id: memId, confirm: true } });
+    expect(confirmed.success).toBe(true);
+    expect(confirmed.result).toContain('已删除');
+    expect(memoryStore.list()).toHaveLength(0);
+  });
+
+  it('delete_memory 按关键词删除', () => {
+    executeTool({ name: 'add_memory', arguments: { content: '偏好用微信支付' } });
+    const r = executeTool({ name: 'delete_memory', arguments: { keyword: '微信', confirm: true } });
+    expect(r.success).toBe(true);
+    expect(memoryStore.list()).toHaveLength(0);
   });
 });
