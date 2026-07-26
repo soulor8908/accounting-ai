@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { type FormEvent, useRef, useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
+import { AI_PROVIDERS, type AIConfig, clearAIConfig, defaultConfig, loadAIConfig, saveAIConfig } from '../core/ai/config';
 import { isValidStateShape } from '../core/store/store';
 import { store } from './appState';
 import { resetChatHistory } from './ChatView';
@@ -7,6 +8,42 @@ import { resetChatHistory } from './ChatView';
 export function SettingsView({ onChanged }: { onChanged: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState('');
+
+  // AI 配置
+  const existing = loadAIConfig() ?? defaultConfig();
+  const [aiConfig, setAIConfig] = useState<AIConfig>(existing);
+  const [aiMessage, setAIMessage] = useState('');
+
+  const onProviderChange = (providerId: string) => {
+    const preset = AI_PROVIDERS.find((p) => p.id === providerId);
+    if (preset) {
+      setAIConfig({
+        ...aiConfig,
+        providerId,
+        baseUrl: preset.baseUrl || aiConfig.baseUrl,
+        model: preset.defaultModel || aiConfig.model,
+      });
+    }
+  };
+
+  const onAISubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!aiConfig.apiKey.trim()) {
+      setAIMessage('请填写 API Key');
+      return;
+    }
+    saveAIConfig(aiConfig);
+    setAIMessage('AI 配置已保存');
+    resetChatHistory();
+    onChanged();
+  };
+
+  const onClearAI = () => {
+    clearAIConfig();
+    setAIConfig(defaultConfig());
+    setAIMessage('AI 配置已清除，将使用本地解析引擎');
+    onChanged();
+  };
 
   const exportData = () => {
     const blob = new Blob([JSON.stringify(store.state, null, 2)], { type: 'application/json' });
@@ -44,9 +81,75 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
     }
   };
 
+  const currentPreset = AI_PROVIDERS.find((p) => p.id === aiConfig.providerId);
+
   return (
     <div className="panel">
       <h2>设置</h2>
+
+      <h3>AI 助手配置</h3>
+      <form className="ai-config-form" onSubmit={onAISubmit}>
+        <label className="form-row">
+          <span>AI 服务商</span>
+          <select value={aiConfig.providerId} onChange={(e) => onProviderChange(e.target.value)}>
+            {AI_PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="form-row">
+          <span>API Key</span>
+          <input
+            type="password"
+            value={aiConfig.apiKey}
+            onChange={(e) => setAIConfig({ ...aiConfig, apiKey: e.target.value })}
+            placeholder="sk-..."
+            autoComplete="off"
+          />
+        </label>
+        <label className="form-row">
+          <span>Base URL</span>
+          <input
+            type="text"
+            value={aiConfig.baseUrl}
+            onChange={(e) => setAIConfig({ ...aiConfig, baseUrl: e.target.value })}
+            placeholder="https://api.deepseek.com"
+          />
+        </label>
+        <label className="form-row">
+          <span>模型</span>
+          {currentPreset && currentPreset.models.length > 0 ? (
+            <select value={aiConfig.model} onChange={(e) => setAIConfig({ ...aiConfig, model: e.target.value })}>
+              {currentPreset.models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+              {aiConfig.providerId === 'custom' && <option value={aiConfig.model}>{aiConfig.model}</option>}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={aiConfig.model}
+              onChange={(e) => setAIConfig({ ...aiConfig, model: e.target.value })}
+              placeholder="模型名称"
+            />
+          )}
+        </label>
+        <div className="settings-actions">
+          <button type="submit">保存 AI 配置</button>
+          <button type="button" onClick={onClearAI}>
+            清除配置
+          </button>
+        </div>
+        {aiMessage && <p className="info-text">{aiMessage}</p>}
+        <p className="meta">
+          配置后可在「对话」页用自然语言记账、查询、编辑。API Key 仅存储在本地浏览器。
+          {aiConfig.providerId === 'deepseek' && ' DeepSeek 默认使用 deepseek-v4-flash。'}
+        </p>
+      </form>
 
       <h3>分期计划</h3>
       <ul className="plan-list">

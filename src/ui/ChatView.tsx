@@ -1,31 +1,43 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { type EngineResult, formatMoney } from '../core/engine/engine';
+import { type AIConfig, defaultConfig, loadAIConfig } from '../core/ai/config';
+import { type ChatMessage as AIMessage, chatWithAI } from '../core/ai/client';
 import { engine, store } from './appState';
 
 interface ChatMessage {
   role: 'user' | 'ai';
   text: string;
-  status?: EngineResult['status'];
+  status?: EngineResult['status'] | 'thinking' | 'tool' | 'ai';
   options?: string[];
 }
 
 const SAMPLES = ['中午吃了碗面25', '3k工资到账', '微信还有多少余额', '这个月花了多少'];
 
-// 模块级缓存：保留聊天历史，避免切换 Tab 时丢失
-const INITIAL_MESSAGE: ChatMessage = { role: 'ai', text: '你好，我是记账助手。直接说「吃午饭25」就能记账。' };
+const INITIAL_MESSAGE: ChatMessage = { role: 'ai', text: '你好，我是记账助手。直接说「吃午饭25」就能记账，也可以问我「这个月花了多少」。' };
 let cachedMessages: ChatMessage[] = [INITIAL_MESSAGE];
 
-/** 清空聊天历史（清空数据时调用） */
 export function resetChatHistory() {
   cachedMessages = [INITIAL_MESSAGE];
+}
+
+// 转换为 AI API 的历史消息格式
+function toAIMessages(messages: ChatMessage[]): AIMessage[] {
+  return messages
+    .filter((m) => m.role === 'user' || (m.role === 'ai' && m.text))
+    .slice(-10) // 只取最近10条，控制 token
+    .map((m) => ({
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: m.text,
+    }));
 }
 
 export function ChatView({ onChanged }: { onChanged: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages);
   const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [aiConfig, setAIConfig] = useState<AIConfig | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // 同步到模块级缓存
   useEffect(() => {
     cachedMessages = messages;
   }, [messages]);
@@ -35,23 +47,116 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  const pushResult = (r: EngineResult) => {
-    setMessages((ms) => [...ms, { role: 'ai', text: r.message, status: r.status, options: r.clarifyOptions }]);
+  useEffect(() => {
+    setAIConfig(loadAIConfig() ?? defaultConfig());
+  }, []);
+
+  const pushAI = (text: string, status: ChatMessage['status'] = 'ai') => {
+    setMessages((ms) => [...ms, { role: 'ai', text, status }]);
   };
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     const t = text.trim();
-    if (!t) return;
-    setMessages((ms) => [...ms, { role: 'user', text: t }]);
-    const r = engine.handle(t);
-    pushResult(r);
+    if (!t || loading) return;
     setInput('');
+    setMessages((ms) => [...ms, { role: 'user', text: t }]);
+    setLoading(true);
+
+    // 优先使用 AI
+    if (aiConfig?.apiKey) {
+      const history = toAIMessages(messages);
+      let thinkingShown = false;
+
+      await chatWithAI(t, history, aiConfig, {
+        onThinking: () => {
+          if (!thinkingShown) {
+            thinkingShown = true;
+            pushAI('思考中...', 'thinking');
+          }
+        },
+        onToolExecuting: (name) => {
+          // 替换最后一条 thinking 消息
+          setMessages((ms) => {
+            const copy = [...ms];
+            const last = copy[copy.length - 1];
+            if (last?.status === 'thinking' || last?.status === 'tool') {
+              copy[copy.length - 1] = { role: 'ai', text: `正在执行：${name}...`, status: 'tool' };
+            }
+            return copy;
+          });
+        },
+        onToolResult: (result) => {
+          // 替换最后一条 tool 消息为结果
+          setMessages((ms) => {
+            const copy = [...ms];
+            const last = copy[copy.length - 1];
+            if (last?.status === 'tool' || last?.status === 'thinking') {
+              copy[copy.length - 1] = {
+                role: 'ai',
+                text: result.result,
+                status: result.success ? 'ok' : 'error',
+              };
+            }
+            return copy;
+          });
+          onChanged();
+        },
+        onMessage: (text) => {
+          // 替换最后一条 tool/thinking 消息为最终回复
+          setMessages((ms) => {
+            const copy = [...ms];
+            const last = copy[copy.length - 1];
+            if (last?.status === 'tool' || last?.status === 'thinking') {
+              copy[copy.length - 1] = { role: 'ai', text, status: 'ai' };
+            } else {
+              copy.push({ role: 'ai', text, status: 'ai' });
+            }
+            return copy;
+          });
+          onChanged();
+        },
+        onError: (error) => {
+          // 替换最后一条 thinking/tool 消息，或追加
+          setMessages((ms) => {
+            const copy = [...ms];
+            const last = copy[copy.length - 1];
+            if (last?.status === 'tool' || last?.status === 'thinking') {
+              copy[copy.length - 1] = { role: 'ai', text: `⚠️ ${error}`, status: 'error' };
+            } else {
+              copy.push({ role: 'ai', text: `⚠️ ${error}`, status: 'error' });
+            }
+            return copy;
+          });
+        },
+      });
+      setLoading(false);
+      return;
+    }
+
+    // Fallback: 本地引擎
+    const r = engine.handle(t);
+    setMessages((ms) => [...ms, { role: 'ai', text: r.message, status: r.status, options: r.clarifyOptions }]);
     onChanged();
+    setLoading(false);
   };
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    send(input);
+    void send(input);
+  };
+
+  // 本地引擎的确认/取消
+  const handleLocalConfirm = () => {
+    setMessages((ms) => [...ms, { role: 'user', text: '确认' }]);
+    const r = engine.confirmPending();
+    setMessages((ms) => [...ms, { role: 'ai', text: r.message, status: r.status }]);
+    onChanged();
+  };
+
+  const handleLocalCancel = () => {
+    setMessages((ms) => [...ms, { role: 'user', text: '取消' }]);
+    const r = engine.cancelPending();
+    setMessages((ms) => [...ms, { role: 'ai', text: r.message, status: r.status }]);
   };
 
   const totalAssets = store.getTotalAssets();
@@ -77,7 +182,7 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
               {m.options && (
                 <div className="quick-options">
                   {m.options.map((o) => (
-                    <button key={o} type="button" onClick={() => send(o)}>
+                    <button key={o} type="button" disabled={loading} onClick={() => void send(o)}>
                       {o}
                     </button>
                   ))}
@@ -85,26 +190,8 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
               )}
               {m.status === 'confirm' && (
                 <div className="quick-options">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMessages((ms) => [...ms, { role: 'user', text: '确认' }]);
-                      pushResult(engine.confirmPending());
-                      onChanged();
-                    }}
-                  >
-                    确认
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMessages((ms) => [...ms, { role: 'user', text: '取消' }]);
-                      pushResult(engine.cancelPending());
-                      onChanged();
-                    }}
-                  >
-                    取消
-                  </button>
+                  <button type="button" onClick={handleLocalConfirm}>确认</button>
+                  <button type="button" onClick={handleLocalCancel}>取消</button>
                 </div>
               )}
             </div>
@@ -113,7 +200,7 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
       </div>
       <div className="samples">
         {SAMPLES.map((s) => (
-          <button key={s} type="button" onClick={() => send(s)}>
+          <button key={s} type="button" disabled={loading} onClick={() => void send(s)}>
             {s}
           </button>
         ))}
@@ -122,10 +209,13 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="说一句话就记账，如：打车30"
+          placeholder={aiConfig?.apiKey ? '输入消息，AI 帮你记账...' : '说一句话就记账，如：打车30（未配置AI，使用本地解析）'}
           aria-label="记账输入"
+          disabled={loading}
         />
-        <button type="submit">发送</button>
+        <button type="submit" disabled={loading || !input.trim()}>
+          {loading ? '...' : '发送'}
+        </button>
       </form>
     </div>
   );

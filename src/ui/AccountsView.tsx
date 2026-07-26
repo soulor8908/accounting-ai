@@ -26,7 +26,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
   const [limit, setLimit] = useState('');
   const [billDay, setBillDay] = useState('1');
   const [dueDay, setDueDay] = useState('20');
-  const [dueNextDay, setDueNextDay] = useState(false);
+  const [dueNextMonth, setDueNextDay] = useState(false);
   // 贷款专属字段
   const [principal, setPrincipal] = useState('');
   const [annualRate, setAnnualRate] = useState('');
@@ -58,7 +58,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
           limit: Number(limit) || 0,
           billDay: clampDay(billDay, 1),
           dueDay: clampDay(dueDay, 20),
-          dueNextDay,
+          dueNextMonth,
         };
       } else if (type === 'installment') {
         meta = { kind: 'installment', totalLimit: Number(limit) || 0 };
@@ -120,7 +120,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
       setEditLimit(String(acc.meta.limit));
       setEditBillDay(String(acc.meta.billDay));
       setEditDueDay(String(acc.meta.dueDay));
-      setEditDueNextDay(acc.meta.dueNextDay ?? false);
+      setEditDueNextDay(acc.meta.dueNextMonth ?? false);
     } else if (acc.meta?.kind === 'installment') {
       setEditLimit(String(acc.meta.totalLimit));
     }
@@ -139,7 +139,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
           limit: Number(editLimit) || acc.meta.limit,
           billDay: clampDay(editBillDay, acc.meta.billDay),
           dueDay: clampDay(editDueDay, acc.meta.dueDay),
-          dueNextDay: editDueNextDay,
+          dueNextMonth: editDueNextDay,
         };
       } else if (acc.meta?.kind === 'installment') {
         patch.meta = { ...acc.meta, totalLimit: Number(editLimit) || acc.meta.totalLimit };
@@ -182,7 +182,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
                     <input value={editDueDay} onChange={(e) => setEditDueDay(e.target.value)} placeholder="还款日" inputMode="numeric" aria-label="编辑还款日" />
                     <label className="check-row">
                       <input type="checkbox" checked={editDueNextDay} onChange={(e) => setEditDueNextDay(e.target.checked)} />
-                      <span>还款日为账单次日</span>
+                      <span>还款日在次月</span>
                     </label>
                   </>
                 )}
@@ -202,7 +202,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
                   <span className="tag">{TYPE_LABEL[a.type]}</span>
                   {a.meta?.kind === 'credit' && (
                     <span className="meta">
-                      额度 ¥{formatMoney(a.meta.limit)} · 账单日 {a.meta.billDay} 号 · 还款日 {a.meta.dueNextDay ? '账单次日' : `${a.meta.dueDay} 号`}
+                      额度 ¥{formatMoney(a.meta.limit)} · 账单日 {a.meta.billDay} 号 · 还款日 {a.meta.dueNextMonth ? `次月${a.meta.dueDay}号` : `${a.meta.dueDay} 号`}
                     </span>
                   )}
                   {a.meta?.kind === 'installment' && <span className="meta">总额度 ¥{formatMoney(a.meta.totalLimit)}</span>}
@@ -247,12 +247,12 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
         {type === 'credit' && (
           <>
             <input value={billDay} onChange={(e) => setBillDay(e.target.value)} placeholder="账单日（1-31）" inputMode="numeric" aria-label="账单日" />
-            {!dueNextDay && (
+            {!dueNextMonth && (
               <input value={dueDay} onChange={(e) => setDueDay(e.target.value)} placeholder="还款日（1-31）" inputMode="numeric" aria-label="还款日" />
             )}
             <label className="check-row">
-              <input type="checkbox" checked={dueNextDay} onChange={(e) => setDueNextDay(e.target.checked)} />
-              <span>还款日为账单次日</span>
+              <input type="checkbox" checked={dueNextMonth} onChange={(e) => setDueNextDay(e.target.checked)} />
+              <span>还款日在次月</span>
             </label>
           </>
         )}

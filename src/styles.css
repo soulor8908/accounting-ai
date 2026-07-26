@@ -738,7 +738,13 @@ main {
   font-size: 11px;
   overflow: hidden;
   background: var(--card-warm);
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.1s ease;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
 }
 
 .day:hover {
@@ -746,9 +752,19 @@ main {
   box-shadow: var(--shadow-sm);
 }
 
+.day:active {
+  transform: scale(0.96);
+}
+
 .day.empty {
   border: none;
   background: transparent;
+  box-shadow: none;
+  cursor: default;
+}
+
+.day.empty:hover {
+  border: none;
   box-shadow: none;
 }
 
@@ -756,6 +772,16 @@ main {
   border-color: rgba(23, 96, 77, 0.55);
   background: var(--pine-tint);
   box-shadow: 0 0 0 1px rgba(23, 96, 77, 0.35);
+}
+
+.day.selected {
+  border-color: var(--pine);
+  box-shadow: 0 0 0 2px var(--pine), var(--shadow-md);
+  z-index: 1;
+}
+
+.day.has-data {
+  border-color: rgba(23, 96, 77, 0.25);
 }
 
 .day-num {
@@ -793,6 +819,141 @@ main {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+}
+
+/* 日期圆点指示器 */
+.day-dots {
+  display: flex;
+  gap: 2px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.day-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--amber);
+  flex-shrink: 0;
+}
+
+.day-dot.overdue {
+  background: var(--cinnabar);
+}
+
+/* 日期详情面板 */
+.day-detail {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.day-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.day-detail-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-family: var(--font-display);
+  color: var(--ink);
+}
+
+.day-due-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+}
+
+.day-due-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--amber-tint);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.day-due-list li.overdue {
+  background: var(--cinnabar-tint);
+}
+
+.day-due-list .due-label {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.day-due-list .due-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--amber);
+}
+
+.day-due-list li.overdue .due-amount {
+  color: var(--cinnabar);
+}
+
+.day-tx-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.day-tx-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.day-tx-list li:last-child {
+  border-bottom: none;
+}
+
+.day-tx-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.day-tx-desc {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.day-tx-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 滑动提示 */
+.calendar-grid {
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .due-item.overdue,
@@ -975,6 +1136,77 @@ main {
 
 .settings-actions .danger:hover {
   box-shadow: 0 6px 16px rgba(201, 79, 50, 0.4);
+}
+
+/* ---------- AI 配置表单 ---------- */
+.ai-config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-config-form .form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.ai-config-form .form-row > span {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+
+.ai-config-form .form-row input,
+.ai-config-form .form-row select {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-warm);
+  font-size: 14px;
+  font-family: var(--font-body);
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ai-config-form .form-row input:focus,
+.ai-config-form .form-row select:focus {
+  border-color: rgba(23, 96, 77, 0.55);
+  box-shadow: 0 0 0 3px rgba(23, 96, 77, 0.1);
+  background: var(--card);
+}
+
+.ai-config-form .form-row input::placeholder {
+  color: var(--muted);
+}
+
+.ai-config-form .form-row select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238f8878' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 8px;
+  padding-right: 34px;
+  cursor: pointer;
+}
+
+.ai-config-form .settings-actions {
+  margin-top: 4px;
+}
+
+.ai-config-form .info-text {
+  margin: 4px 0 0;
+}
+
+.ai-config-form .meta {
+  margin: 4px 0 0;
+  line-height: 1.6;
 }
 
 .meta {

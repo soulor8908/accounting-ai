@@ -1,0 +1,366 @@
+/**
+ * AI Function Calling 工具定义
+ * 让 AI 能通过工具调用完成记账操作
+ */
+import { formatMoney } from '../engine/engine';
+import { store } from '../../ui/appState';
+import { ValidationError } from '../store/store';
+import type { Account, AccountType, Transaction, TxType } from '../types';
+
+export interface ToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolResult {
+  name: string;
+  result: string;
+  success: boolean;
+}
+
+/** OpenAI 兼容的 function 定义 */
+export const AI_TOOLS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'add_transaction',
+      description: '记一笔账（支出/收入/转账/还款）',
+      parameters: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['expense', 'income', 'transfer', 'repayment'],
+            description: '交易类型',
+          },
+          amount: { type: 'number', description: '金额' },
+          description: { type: 'string', description: '描述，如"午饭""工资"' },
+          accountName: { type: 'string', description: '账户名（可选，不填自动选择）' },
+          toAccountName: { type: 'string', description: '转账/还款目标账户名' },
+          date: { type: 'string', description: '日期 YYYY-MM-DD（可选，默认今天）' },
+        },
+        required: ['type', 'amount', 'description'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_transactions',
+      description: '查询流水记录，可按月份/账户/类型筛选',
+      parameters: {
+        type: 'object',
+        properties: {
+          month: { type: 'string', description: '月份 YYYY-MM（可选）' },
+          accountName: { type: 'string', description: '账户名（可选）' },
+          type: { type: 'string', enum: ['expense', 'income', 'transfer', 'repayment', 'refund'], description: '交易类型（可选）' },
+          limit: { type: 'number', description: '返回条数上限（默认20）' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_transaction',
+      description: '删除指定流水记录（按ID或描述模糊匹配）',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '流水ID（可选）' },
+          descriptionKeyword: { type: 'string', description: '描述关键词（可选，用于模糊查找）' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_transaction',
+      description: '编辑流水记录（修改描述/金额/日期/分类）',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '流水ID（可选）' },
+          descriptionKeyword: { type: 'string', description: '描述关键词（可选，用于模糊查找）' },
+          newDescription: { type: 'string', description: '新描述' },
+          newAmount: { type: 'number', description: '新金额' },
+          newDate: { type: 'string', description: '新日期 YYYY-MM-DD' },
+          newCategory: { type: 'string', description: '新分类' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'query_balance',
+      description: '查询账户余额和总资产',
+      parameters: {
+        type: 'object',
+        properties: {
+          accountName: { type: 'string', description: '账户名（可选，不填返回全部）' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'query_summary',
+      description: '查询统计信息：月度收支、分类统计',
+      parameters: {
+        type: 'object',
+        properties: {
+          month: { type: 'string', description: '月份 YYYY-MM（可选，默认本月）' },
+          scope: { type: 'string', enum: ['month', 'today'], description: '统计范围（默认month）' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'add_account',
+      description: '添加新账户',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '账户名' },
+          type: {
+            type: 'string',
+            enum: ['wallet', 'alipay', 'cash', 'debit', 'credit', 'loan', 'installment'],
+            description: '账户类型',
+          },
+          balance: { type: 'number', description: '初始余额' },
+        },
+        required: ['name', 'type', 'balance'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_accounts',
+      description: '列出所有账户',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+];
+
+const TX_TYPE_LABEL: Record<string, string> = {
+  income: '收入',
+  expense: '支出',
+  transfer: '转账',
+  repayment: '还款',
+  refund: '退款',
+  adjustment: '调账',
+};
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** 执行工具调用 */
+export function executeTool(call: ToolCall): ToolResult {
+  try {
+    switch (call.name) {
+      case 'add_transaction':
+        return execAddTransaction(call.arguments);
+      case 'list_transactions':
+        return execListTransactions(call.arguments);
+      case 'delete_transaction':
+        return execDeleteTransaction(call.arguments);
+      case 'update_transaction':
+        return execUpdateTransaction(call.arguments);
+      case 'query_balance':
+        return execQueryBalance(call.arguments);
+      case 'query_summary':
+        return execQuerySummary(call.arguments);
+      case 'add_account':
+        return execAddAccount(call.arguments);
+      case 'list_accounts':
+        return execListAccounts();
+      default:
+        return { name: call.name, result: `未知工具: ${call.name}`, success: false };
+    }
+  } catch (e) {
+    const msg = e instanceof ValidationError ? e.message : e instanceof Error ? e.message : '执行失败';
+    return { name: call.name, result: msg, success: false };
+  }
+}
+
+function execAddTransaction(args: Record<string, unknown>): ToolResult {
+  const type = args.type as TxType;
+  const amount = Number(args.amount);
+  const description = args.description as string;
+  const accountName = args.accountName as string | undefined;
+  const toAccountName = args.toAccountName as string | undefined;
+  const date = (args.date as string) || todayStr();
+
+  if (store.state.accounts.length === 0) {
+    return { name: 'add_transaction', result: '还没有任何账户，请先添加账户', success: false };
+  }
+
+  // 查找账户
+  let accountId: string;
+  if (accountName) {
+    const matches = store.resolveAccounts(accountName);
+    if (matches.length === 0) {
+      return { name: 'add_transaction', result: `没找到账户「${accountName}」`, success: false };
+    }
+    accountId = matches[0].id;
+  } else {
+    // 自动选择第一个资产账户
+    const assetTypes = ['wallet', 'alipay', 'cash', 'debit'];
+    const acc = store.state.accounts.find((a: Account) => assetTypes.includes(a.type));
+    if (!acc) return { name: 'add_transaction', result: '没有可用的资产账户', success: false };
+    accountId = acc.id;
+  }
+
+  let relatedAccountId: string | undefined;
+  if ((type === 'transfer' || type === 'repayment') && toAccountName) {
+    const matches = store.resolveAccounts(toAccountName);
+    if (matches.length === 0) {
+      return { name: 'add_transaction', result: `没找到目标账户「${toAccountName}」`, success: false };
+    }
+    relatedAccountId = matches[0].id;
+  }
+
+  const { tx, warnings } = store.applyTransaction({
+    type,
+    amount,
+    accountId,
+    relatedAccountId,
+    category: description,
+    description,
+    date,
+  });
+
+  const acc = store.getAccount(accountId);
+  let result = `已记${TX_TYPE_LABEL[type]} ¥${formatMoney(tx.amount)}（${description}），「${acc?.name ?? '?'}」余额 ¥${formatMoney(acc?.balance ?? 0)}`;
+  if (warnings.length > 0) result += `。⚠️ ${warnings.join('；')}`;
+  return { name: 'add_transaction', result, success: true };
+}
+
+function execListTransactions(args: Record<string, unknown>): ToolResult {
+  const month = args.month as string | undefined;
+  const accountName = args.accountName as string | undefined;
+  const type = args.type as string | undefined;
+  const limit = Number(args.limit) || 20;
+
+  let txs: Transaction[] = [...store.state.transactions];
+  if (month) txs = txs.filter((t: Transaction) => t.date.startsWith(month));
+  if (type) txs = txs.filter((t: Transaction) => t.type === type);
+  if (accountName) {
+    const matches = store.resolveAccounts(accountName);
+    if (matches.length > 0) txs = txs.filter((t: Transaction) => t.accountId === matches[0].id);
+  }
+  txs.sort((a: Transaction, b: Transaction) => (b.date + (b.time ?? '')).localeCompare(a.date + (a.time ?? '')));
+  txs = txs.slice(0, limit);
+
+  if (txs.length === 0) return { name: 'list_transactions', result: '没有找到符合条件的流水记录', success: true };
+
+  const lines = txs.map((t: Transaction) => {
+    const acc = store.getAccount(t.accountId);
+    const sign = t.type === 'income' || t.type === 'refund' ? '+' : '-';
+    return `${t.date} ${TX_TYPE_LABEL[t.type]} ${sign}¥${formatMoney(t.amount)} ${t.description || t.category}（${acc?.name ?? '?'}）`;
+  });
+  return { name: 'list_transactions', result: `找到 ${txs.length} 笔：\n${lines.join('\n')}`, success: true };
+}
+
+function execDeleteTransaction(args: Record<string, unknown>): ToolResult {
+  const id = args.id as string | undefined;
+  const keyword = args.descriptionKeyword as string | undefined;
+
+  let tx;
+  if (id) {
+    tx = store.deleteTransaction(id);
+    if (!tx) return { name: 'delete_transaction', result: `没找到ID为 ${id} 的流水`, success: false };
+  } else if (keyword) {
+    const found = store.state.transactions.filter((t: Transaction) => (t.description || t.category).includes(keyword));
+    if (found.length === 0) return { name: 'delete_transaction', result: `没找到包含「${keyword}」的流水`, success: false };
+    if (found.length > 1) return { name: 'delete_transaction', result: `找到 ${found.length} 笔包含「${keyword}」的流水，请提供更精确的信息`, success: false };
+    tx = store.deleteTransaction(found[0].id);
+  } else {
+    return { name: 'delete_transaction', result: '请提供流水ID或描述关键词', success: false };
+  }
+
+  return { name: 'delete_transaction', result: `已删除：${tx!.date} ${tx!.description || tx!.category} ¥${formatMoney(tx!.amount)}`, success: true };
+}
+
+function execUpdateTransaction(args: Record<string, unknown>): ToolResult {
+  const id = args.id as string | undefined;
+  const keyword = args.descriptionKeyword as string | undefined;
+
+  let targetId = id;
+  if (!targetId && keyword) {
+    const found = store.state.transactions.filter((t: Transaction) => (t.description || t.category).includes(keyword));
+    if (found.length === 0) return { name: 'update_transaction', result: `没找到包含「${keyword}」的流水`, success: false };
+    if (found.length > 1) return { name: 'update_transaction', result: `找到 ${found.length} 笔，请提供更精确的信息`, success: false };
+    targetId = found[0].id;
+  }
+
+  if (!targetId) return { name: 'update_transaction', result: '请提供流水ID或描述关键词', success: false };
+
+  const patch: Record<string, unknown> = {};
+  if (args.newDescription !== undefined) patch.description = args.newDescription;
+  if (args.newAmount !== undefined) patch.amount = Number(args.newAmount);
+  if (args.newDate !== undefined) patch.date = args.newDate;
+  if (args.newCategory !== undefined) patch.category = args.newCategory;
+
+  const tx = store.updateTransaction(targetId, patch);
+  if (!tx) return { name: 'update_transaction', result: `没找到ID为 ${targetId} 的流水`, success: false };
+
+  return { name: 'update_transaction', result: `已更新：${tx.date} ${tx.description || tx.category} ¥${formatMoney(tx.amount)}`, success: true };
+}
+
+function execQueryBalance(args: Record<string, unknown>): ToolResult {
+  const accountName = args.accountName as string | undefined;
+  if (accountName) {
+    const matches = store.resolveAccounts(accountName);
+    if (matches.length === 0) return { name: 'query_balance', result: `没找到账户「${accountName}」`, success: false };
+    const acc = matches[0];
+    return { name: 'query_balance', result: `「${acc.name}」当前余额 ¥${formatMoney(acc.balance)}`, success: true };
+  }
+  const assets = store.getTotalAssets();
+  const liabilities = store.getTotalLiabilities();
+  const lines = store.state.accounts.map((a: Account) => `「${a.name}」¥${formatMoney(a.balance)}`);
+  return {
+    name: 'query_balance',
+    result: `${lines.join('，')}。总资产 ¥${formatMoney(assets)}，总负债 ¥${formatMoney(liabilities)}，净资产 ¥${formatMoney(assets - liabilities)}`,
+    success: true,
+  };
+}
+
+function execQuerySummary(args: Record<string, unknown>): ToolResult {
+  const scope = (args.scope as string) || 'month';
+  const today = todayStr();
+  if (scope === 'today') {
+    const txs = store.state.transactions.filter((t: Transaction) => t.date === today);
+    const expense = txs.filter((t: Transaction) => t.type === 'expense').reduce((s: number, t: Transaction) => s + t.amount, 0);
+    const income = txs.filter((t: Transaction) => t.type === 'income' || t.type === 'refund').reduce((s: number, t: Transaction) => s + t.amount, 0);
+    return { name: 'query_summary', result: `今天（${today}）支出 ¥${formatMoney(expense)}，收入 ¥${formatMoney(income)}，共 ${txs.length} 笔`, success: true };
+  }
+  const month = (args.month as string) || today.slice(0, 7);
+  const s = store.getMonthlySummary(month);
+  const cats = store.getCategoryStats(month).slice(0, 5);
+  const catLines = cats.map((c: { category: string; amount: number }) => `${c.category} ¥${formatMoney(c.amount)}`).join('，');
+  let result = `本月（${month}）支出 ¥${formatMoney(s.expense)}，收入 ¥${formatMoney(s.income)}，结余 ¥${formatMoney(s.income - s.expense)}，共 ${s.count} 笔`;
+  if (catLines) result += `。分类：${catLines}`;
+  return { name: 'query_summary', result, success: true };
+}
+
+function execAddAccount(args: Record<string, unknown>): ToolResult {
+  const name = args.name as string;
+  const type = args.type as AccountType;
+  const balance = Number(args.balance) || 0;
+  store.addAccount({ name, type, balance });
+  return { name: 'add_account', result: `已添加账户「${name}」`, success: true };
+}
+
+function execListAccounts(): ToolResult {
+  if (store.state.accounts.length === 0) return { name: 'list_accounts', result: '还没有任何账户', success: true };
+  const lines = store.state.accounts.map((a: Account) => `「${a.name}」（${a.type}）余额 ¥${formatMoney(a.balance)}`);
+  return { name: 'list_accounts', result: lines.join('；'), success: true };
+}

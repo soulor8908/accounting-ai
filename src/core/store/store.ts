@@ -446,6 +446,72 @@ export class Store {
     return entry.tx;
   }
 
+  // ---------- 删除/编辑流水 ----------
+  /** 删除指定流水（反向调整账户余额） */
+  deleteTransaction(id: string): Transaction | null {
+    const idx = this.state.transactions.findIndex((t) => t.id === id);
+    if (idx < 0) return null;
+    const tx = this.state.transactions[idx];
+    // 反向调整账户余额
+    const acc = this.getAccount(tx.accountId);
+    if (acc) {
+      switch (tx.type) {
+        case 'income':
+        case 'refund':
+          acc.balance -= tx.amount;
+          break;
+        case 'expense':
+        case 'repayment':
+          acc.balance += tx.amount;
+          break;
+        case 'transfer': {
+          acc.balance += tx.amount;
+          if (tx.relatedAccountId) {
+            const to = this.getAccount(tx.relatedAccountId);
+            if (to) to.balance -= tx.amount;
+          }
+          break;
+        }
+        case 'adjustment':
+          // 调账方向不确定，不自动调整
+          break;
+      }
+    }
+    // 如果是还款，恢复负债账户余额
+    if (tx.type === 'repayment' && tx.relatedAccountId) {
+      const debt = this.getAccount(tx.relatedAccountId);
+      if (debt) debt.balance += tx.amount;
+    }
+    this.state.transactions.splice(idx, 1);
+    this.save();
+    return tx;
+  }
+
+  /** 更新流水（仅修改描述、分类、日期、金额） */
+  updateTransaction(id: string, patch: Partial<Pick<Transaction, 'description' | 'category' | 'date' | 'amount'>>): Transaction | null {
+    const tx = this.state.transactions.find((t) => t.id === id);
+    if (!tx) return null;
+    if (patch.description !== undefined) tx.description = patch.description;
+    if (patch.category !== undefined) tx.category = patch.category;
+    if (patch.date !== undefined) tx.date = patch.date;
+    if (patch.amount !== undefined && patch.amount !== tx.amount) {
+      // 金额变更：先回滚旧金额，再应用新金额
+      const diff = patch.amount - tx.amount;
+      const acc = this.getAccount(tx.accountId);
+      if (acc) {
+        if (tx.type === 'expense' || tx.type === 'repayment') acc.balance -= diff;
+        else if (tx.type === 'income' || tx.type === 'refund') acc.balance += diff;
+      }
+      if (tx.type === 'transfer' && tx.relatedAccountId) {
+        const to = this.getAccount(tx.relatedAccountId);
+        if (to) to.balance += diff;
+      }
+      tx.amount = patch.amount;
+    }
+    this.save();
+    return tx;
+  }
+
   /** 供引擎使用：把"创建分期计划"挂到最近一次撤销记录上 */
   attachCreatedPlanToLastUndo(planId: string): void {
     const last = this.undoStack[this.undoStack.length - 1];
@@ -611,19 +677,33 @@ export class Store {
     const [y, m] = month.split('-').map(Number);
     const lastDay = new Date(y, m, 0).getDate();
     const mk = (day: number) => `${month}-${String(Math.min(day, lastDay)).padStart(2, '0')}`;
+    const currentMonth = today.slice(0, 7);
+    const [cy, cm] = currentMonth.split('-').map(Number);
+    const nextMonthStr = cm === 12 ? `${cy + 1}-01` : `${cy}-${String(cm + 1).padStart(2, '0')}`;
 
     for (const acc of this.state.accounts) {
       if (acc.meta?.kind === 'credit') {
         const meta: CreditCardMeta = acc.meta;
-        items.push({
-          kind: 'credit_bill', date: mk(meta.billDay), label: `${acc.name} 账单日`,
-          amount: acc.balance, accountId: acc.id, overdue: false,
-        });
-        if (acc.balance > 0) {
-          // dueNextDay: 还款日为账单日次日（跨月则取下月1号）
-          const dueDate = meta.dueNextDay
-            ? this.dateAfter(mk(meta.billDay))
-            : mk(meta.dueDay);
+        // 信用卡只显示当月账单周期：账单日在当月，还款日在当月或次月
+        // 历史月不显示，未来月不显示（未出账）
+        if (month === currentMonth) {
+          // 账单日
+          items.push({
+            kind: 'credit_bill', date: mk(meta.billDay), label: `${acc.name} 账单日`,
+            amount: acc.balance, accountId: acc.id, overdue: false,
+          });
+          // 还款日（同月）
+          if (!meta.dueNextMonth && acc.balance > 0) {
+            const dueDate = mk(meta.dueDay);
+            items.push({
+              kind: 'credit_due', date: dueDate, label: `${acc.name} 还款日`,
+              amount: acc.balance, accountId: acc.id, overdue: dueDate < today,
+            });
+          }
+        }
+        // 还款日在次月的情况
+        if (meta.dueNextMonth && month === nextMonthStr && acc.balance > 0) {
+          const dueDate = mk(meta.dueDay);
           items.push({
             kind: 'credit_due', date: dueDate, label: `${acc.name} 还款日`,
             amount: acc.balance, accountId: acc.id, overdue: dueDate < today,
@@ -632,10 +712,9 @@ export class Store {
       }
       if (acc.meta?.kind === 'loan' && acc.balance > 0) {
         const meta: LoanMeta = acc.meta;
-        // 计算该月所有应还期数（基于放款日 + dueDay + 总期数 - 已还期数）
         const loanDates = this.loanDueDatesForMonth(meta, month);
         for (const { k, date } of loanDates) {
-          if (k <= meta.paidMonths) continue; // 已还跳过
+          if (k <= meta.paidMonths) continue;
           items.push({
             kind: 'loan', date, label: `${acc.name} 第${k}期月供`,
             amount: meta.monthlyPayment, accountId: acc.id,
@@ -654,13 +733,6 @@ export class Store {
       });
     }
     return items.sort((a, b) => a.date.localeCompare(b.date));
-  }
-
-  /** 计算给定日期的次日（跨月/跨年自动处理） */
-  private dateAfter(dateStr: string): string {
-    const [y, m, d] = dateStr.split('-').map(Number);
-    const dt = new Date(y, m - 1, d + 1);
-    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
   }
 
   /** 计算贷款在某月的所有应还期号及日期 */
