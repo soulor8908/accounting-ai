@@ -3,6 +3,7 @@ import { Engine } from '../core/engine/engine';
 import { Store } from '../core/store/store';
 import { MemoryStore } from '../core/store/memory';
 import { ChatStore } from '../core/store/chatStore';
+import { QuickInputStore } from '../core/store/quickInput';
 import { isVaultEnabled } from '../core/security/vault';
 
 export const store = new Store();
@@ -18,6 +19,9 @@ export const memoryStore = new MemoryStore();
 
 /** AI 聊天会话单例：多会话历史持久化 */
 export const chatStore = new ChatStore();
+
+/** 快捷输入单例：用户自定义聊天快捷短语，独立持久化 */
+export const quickInputStore = new QuickInputStore();
 
 /** 启动时补齐到期的周期记账（仅在已解锁时调用） */
 export function bootstrap(): number {

@@ -3,7 +3,12 @@ import { type EngineResult, formatMoney } from '../core/engine/engine';
 import { type AIConfig, defaultConfig, loadAIConfig } from '../core/ai/config';
 import { type ChatMessage as AIMessage, chatWithAI } from '../core/ai/client';
 import { extractHabit } from '../core/ai/habits';
-import { chatStore, engine, memoryStore, store } from './appState';
+import {
+  AMOUNT_PLACEHOLDER,
+  findPlaceholderRange,
+  hasAmountPlaceholder,
+} from '../core/store/quickInput';
+import { chatStore, engine, memoryStore, quickInputStore, store } from './appState';
 import type { ChatMessageRecord } from '../core/store/chatStore';
 
 interface ChatMessage {
@@ -14,8 +19,6 @@ interface ChatMessage {
   /** 流式输出中 */
   streaming?: boolean;
 }
-
-const SAMPLES = ['中午吃了碗面25', '3k工资到账', '微信还有多少余额', '这个月花了多少'];
 
 const INITIAL_MESSAGE: ChatMessage = { role: 'ai', text: '你好，我是记账助手。直接说「吃午饭25」就能记账，也可以问我「这个月花了多少」。' };
 
@@ -74,7 +77,10 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
   const [aiConfig, setAIConfig] = useState<AIConfig | null>(null);
   const [samplesOpen, setSamplesOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [quickManageOpen, setQuickManageOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const quickInputs = quickInputStore.list();
 
   useEffect(() => {
     setAIConfig(loadAIConfig() ?? defaultConfig());
@@ -263,6 +269,59 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
     void send(input);
   };
 
+  /** 点击快捷输入：无占位符直接发送；有占位符填入输入框并自动选中占位符 */
+  const onQuickClick = (template: string) => {
+    if (loading) return;
+    if (!hasAmountPlaceholder(template)) {
+      void send(template);
+      return;
+    }
+    // 含占位符：填入输入框，聚焦并选中占位符区间，用户输入数字即替换
+    setInput(template);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      const range = findPlaceholderRange(template);
+      if (range) {
+        el.setSelectionRange(range[0], range[1]);
+      }
+    });
+  };
+
+  // 快捷输入管理：增删改
+  const addQuickInput = () => {
+    const template = window.prompt('新建快捷输入（可用 {金额} 作为占位符）', `早餐 ${AMOUNT_PLACEHOLDER} 元`);
+    if (!template) return;
+    if (!quickInputStore.add(template)) {
+      window.alert('添加失败：内容为空或超出上限（30 条）');
+      return;
+    }
+    onChanged();
+  };
+
+  const editQuickInput = (id: string, current: string) => {
+    const template = window.prompt('编辑快捷输入', current);
+    if (template === null) return;
+    if (!quickInputStore.update(id, template)) {
+      window.alert('更新失败：内容为空');
+      return;
+    }
+    onChanged();
+  };
+
+  const deleteQuickInput = (id: string, current: string) => {
+    if (!window.confirm(`删除快捷输入「${current}」？`)) return;
+    quickInputStore.remove(id);
+    onChanged();
+  };
+
+  const resetQuickInputs = () => {
+    if (!window.confirm('恢复为默认快捷输入？当前自定义内容将被覆盖。')) return;
+    quickInputStore.resetToDefaults();
+    onChanged();
+  };
+
   // 本地引擎的确认/取消
   const handleLocalConfirm = () => {
     const userMsg: ChatMessage = { role: 'user', text: '确认' };
@@ -392,16 +451,31 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
           </button>
           {samplesOpen && (
             <div className="samples">
-              {SAMPLES.map((s) => (
-                <button key={s} type="button" disabled={loading} onClick={() => void send(s)}>
-                  {s}
+              {quickInputs.length === 0 && <div className="samples-empty">暂无快捷输入，点击「管理」添加</div>}
+              {quickInputs.map((q) => (
+                <button
+                  key={q.id}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => onQuickClick(q.template)}
+                  title={hasAmountPlaceholder(q.template) ? '点击后填写金额' : '点击直接发送'}
+                >
+                  {q.template}
                 </button>
               ))}
+              <button
+                type="button"
+                className="samples-manage-btn"
+                onClick={() => setQuickManageOpen(true)}
+              >
+                管理
+              </button>
             </div>
           )}
         </div>
         <form className="chat-input" onSubmit={onSubmit}>
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={aiConfig?.apiKey ? '输入消息，AI 帮你记账...' : '说一句话就记账，如：打车30（未配置AI，使用本地解析）'}
@@ -413,6 +487,37 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
           </button>
         </form>
       </div>
+
+      {/* 快捷输入管理弹窗 */}
+      {quickManageOpen && (
+        <div className="modal-overlay" onClick={() => setQuickManageOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">管理快捷输入</span>
+              <button type="button" className="modal-close" onClick={() => setQuickManageOpen(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="modal-tip">提示：使用 <code>{'{金额}'}</code> 作为占位符，点击该快捷输入时会自动选中让用户填入金额。</div>
+              <div className="quick-list">
+                {quickInputs.length === 0 && <div className="empty">暂无快捷输入</div>}
+                {quickInputs.map((q) => (
+                  <div key={q.id} className="quick-item">
+                    <div className="quick-item-template">{q.template}</div>
+                    <div className="quick-item-actions">
+                      <button type="button" onClick={() => editQuickInput(q.id, q.template)}>编辑</button>
+                      <button type="button" onClick={() => deleteQuickInput(q.id, q.template)}>删除</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" onClick={resetQuickInputs}>恢复默认</button>
+              <button type="button" onClick={addQuickInput} className="primary">+ 新建</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
