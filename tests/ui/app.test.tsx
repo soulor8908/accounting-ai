@@ -12,7 +12,7 @@ describe('App 冒烟', () => {
 
   it('渲染主界面与导航', () => {
     render(<App />);
-    expect(screen.getByText('智能记账AI助手')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '智能记账' })).toBeInTheDocument();
     for (const tab of ['对话', '账户', '日历', '流水', '统计', '设置']) {
       expect(screen.getByRole('button', { name: tab })).toBeInTheDocument();
     }

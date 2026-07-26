@@ -31,7 +31,10 @@ export function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>智能记账AI助手</h1>
+        <div>
+          <h1>智能记账</h1>
+          <p className="header-sub">AI LEDGER · 一句话记一笔</p>
+        </div>
       </header>
       <main>
         {tab === 'chat' && <ChatView onChanged={bump} />}
