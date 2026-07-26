@@ -508,14 +508,100 @@ main {
   border-color: var(--border);
 }
 
+.account-info {
+  flex: 1;
+  min-width: 0;
+}
+
 .account-item strong {
   font-size: 15px;
 }
 
-.account-item > span:last-child {
+.account-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.account-right > span {
   font-family: var(--font-display);
   font-size: 17px;
   font-weight: 700;
+}
+
+.account-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-sm:hover {
+  background: var(--pine-tint);
+  border-color: var(--pine);
+  color: var(--pine);
+}
+
+.btn-sm.danger:hover {
+  background: var(--cinnabar-tint);
+  border-color: var(--cinnabar);
+  color: var(--cinnabar);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  width: 100%;
+}
+
+.check-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--pine);
+  cursor: pointer;
+}
+
+.account-edit-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.account-edit-form input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  flex: 1;
+  min-width: 80px;
+  outline: none;
+}
+
+.account-edit-form input:focus {
+  border-color: rgba(23, 96, 77, 0.55);
+  box-shadow: 0 0 0 3px rgba(23, 96, 77, 0.1);
+}
+
+.edit-actions {
+  display: flex;
+  gap: 6px;
+  width: 100%;
 }
 
 .account-item .meta,

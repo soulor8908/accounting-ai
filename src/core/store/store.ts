@@ -620,7 +620,10 @@ export class Store {
           amount: acc.balance, accountId: acc.id, overdue: false,
         });
         if (acc.balance > 0) {
-          const dueDate = mk(meta.dueDay);
+          // dueNextDay: 还款日为账单日次日（跨月则取下月1号）
+          const dueDate = meta.dueNextDay
+            ? this.dateAfter(mk(meta.billDay))
+            : mk(meta.dueDay);
           items.push({
             kind: 'credit_due', date: dueDate, label: `${acc.name} 还款日`,
             amount: acc.balance, accountId: acc.id, overdue: dueDate < today,
@@ -629,11 +632,14 @@ export class Store {
       }
       if (acc.meta?.kind === 'loan' && acc.balance > 0) {
         const meta: LoanMeta = acc.meta;
-        if (meta.nextDueDate.startsWith(month)) {
+        // 计算该月所有应还期数（基于放款日 + dueDay + 总期数 - 已还期数）
+        const loanDates = this.loanDueDatesForMonth(meta, month);
+        for (const { k, date } of loanDates) {
+          if (k <= meta.paidMonths) continue; // 已还跳过
           items.push({
-            kind: 'loan', date: meta.nextDueDate, label: `${acc.name} 月供`,
+            kind: 'loan', date, label: `${acc.name} 第${k}期月供`,
             amount: meta.monthlyPayment, accountId: acc.id,
-            overdue: meta.nextDueDate < today && meta.paidMonths < meta.termMonths,
+            overdue: date < today,
           });
         }
       }
@@ -648,6 +654,31 @@ export class Store {
       });
     }
     return items.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  /** 计算给定日期的次日（跨月/跨年自动处理） */
+  private dateAfter(dateStr: string): string {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d + 1);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  }
+
+  /** 计算贷款在某月的所有应还期号及日期 */
+  private loanDueDatesForMonth(meta: LoanMeta, month: string): Array<{ k: number; date: string }> {
+    const [sy, sm] = meta.startDate.split('-').map(Number).slice(0, 2) as [number, number];
+    const [my, mm] = month.split('-').map(Number);
+    const results: Array<{ k: number; date: string }> = [];
+    for (let k = 1; k <= meta.termMonths; k++) {
+      const totalMonths = sy * 12 + (sm - 1) + k;
+      const py = Math.floor(totalMonths / 12);
+      const pm = (totalMonths % 12) + 1;
+      if (py === my && pm === mm) {
+        const lastDay = new Date(py, pm, 0).getDate();
+        const day = Math.min(meta.dueDay, lastDay);
+        results.push({ k, date: `${py}-${String(pm).padStart(2, '0')}-${String(day).padStart(2, '0')}` });
+      }
+    }
+    return results;
   }
 
   // ---------- 持久化 ----------

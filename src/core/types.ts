@@ -20,6 +20,7 @@ export interface CreditCardMeta {
   limit: number; // 固定额度
   billDay: number; // 账单日（每月几号）
   dueDay: number; // 还款日（每月几号）
+  dueNextDay?: boolean; // 还款日为账单日次日
   tempLimit?: number; // 临时额度
 }
 

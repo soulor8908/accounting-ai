@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
 import { ValidationError } from '../core/store/store';
-import type { AccountMeta, AccountType, RepaymentMethod } from '../core/types';
+import type { Account, AccountMeta, AccountType, RepaymentMethod } from '../core/types';
 import { round2 } from '../core/utils/money';
 import { store } from './appState';
 
@@ -15,6 +15,10 @@ const TYPE_LABEL: Record<AccountType, string> = {
   installment: '白条/花呗',
 };
 
+function clampDay(v: string, fallback = 20): number {
+  return Math.min(31, Math.max(1, Number(v) || fallback));
+}
+
 export function AccountsView({ onChanged }: { onChanged: () => void }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<AccountType>('wallet');
@@ -22,6 +26,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
   const [limit, setLimit] = useState('');
   const [billDay, setBillDay] = useState('1');
   const [dueDay, setDueDay] = useState('20');
+  const [dueNextDay, setDueNextDay] = useState(false);
   // 贷款专属字段
   const [principal, setPrincipal] = useState('');
   const [annualRate, setAnnualRate] = useState('');
@@ -30,6 +35,16 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
   const [repaymentMethod, setRepaymentMethod] = useState<RepaymentMethod>('equal_interest');
   const [loanDueDay, setLoanDueDay] = useState('20');
   const [error, setError] = useState('');
+
+  // 编辑状态
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editBalance, setEditBalance] = useState('');
+  const [editLimit, setEditLimit] = useState('');
+  const [editBillDay, setEditBillDay] = useState('');
+  const [editDueDay, setEditDueDay] = useState('');
+  const [editDueNextDay, setEditDueNextDay] = useState(false);
+  const [editError, setEditError] = useState('');
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -41,8 +56,9 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
         meta = {
           kind: 'credit',
           limit: Number(limit) || 0,
-          billDay: Math.min(28, Math.max(1, Number(billDay) || 1)),
-          dueDay: Math.min(28, Math.max(1, Number(dueDay) || 20)),
+          billDay: clampDay(billDay, 1),
+          dueDay: clampDay(dueDay, 20),
+          dueNextDay,
         };
       } else if (type === 'installment') {
         meta = { kind: 'installment', totalLimit: Number(limit) || 0 };
@@ -51,8 +67,8 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
         const rate = Number(annualRate) || 0;
         const term = Math.max(1, Math.min(360, Number(termMonths) || 1));
         const start = startDate || new Date().toISOString().slice(0, 10);
-        const dd = Math.min(28, Math.max(1, Number(loanDueDay) || 20));
-        // 计算月供：等额本息公式
+        const dd = clampDay(loanDueDay, 20);
+        // 计算月供
         let monthly = 0;
         if (p > 0 && term > 0) {
           if (repaymentMethod === 'interest_only') {
@@ -61,7 +77,6 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
             const r = rate / 12;
             monthly = r > 0 ? round2(p * r * Math.pow(1 + r, term) / (Math.pow(1 + r, term) - 1)) : round2(p / term);
           } else {
-            // equal_principal：首月月供
             const r = rate / 12;
             monthly = round2(p / term + p * r);
           }
@@ -79,7 +94,6 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
           dueDay: dd,
           nextDueDate: start,
         };
-        // 贷款账户余额 = 本金（正数，表示欠款金额），与系统约定一致
         initialBalance = p;
       }
       store.addAccount({ name, type, balance: initialBalance, meta });
@@ -90,11 +104,66 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
       setAnnualRate('');
       setTermMonths('');
       setStartDate('');
+      setDueNextDay(false);
       onChanged();
     } catch (err) {
       setError(err instanceof ValidationError ? err.message : '创建失败');
     }
   };
+
+  const startEdit = (acc: Account) => {
+    setEditingId(acc.id);
+    setEditName(acc.name);
+    setEditBalance(String(acc.balance));
+    setEditError('');
+    if (acc.meta?.kind === 'credit') {
+      setEditLimit(String(acc.meta.limit));
+      setEditBillDay(String(acc.meta.billDay));
+      setEditDueDay(String(acc.meta.dueDay));
+      setEditDueNextDay(acc.meta.dueNextDay ?? false);
+    } else if (acc.meta?.kind === 'installment') {
+      setEditLimit(String(acc.meta.totalLimit));
+    }
+  };
+
+  const saveEdit = (acc: Account) => {
+    setEditError('');
+    try {
+      const patch: Partial<Account> = {
+        name: editName.trim() || acc.name,
+        balance: round2(Number(editBalance) || 0),
+      };
+      if (acc.meta?.kind === 'credit') {
+        patch.meta = {
+          ...acc.meta,
+          limit: Number(editLimit) || acc.meta.limit,
+          billDay: clampDay(editBillDay, acc.meta.billDay),
+          dueDay: clampDay(editDueDay, acc.meta.dueDay),
+          dueNextDay: editDueNextDay,
+        };
+      } else if (acc.meta?.kind === 'installment') {
+        patch.meta = { ...acc.meta, totalLimit: Number(editLimit) || acc.meta.totalLimit };
+      }
+      store.updateAccount(acc.id, patch);
+      setEditingId(null);
+      onChanged();
+    } catch (err) {
+      setEditError(err instanceof ValidationError ? err.message : '保存失败');
+    }
+  };
+
+  const deleteAccount = (acc: Account) => {
+    setEditError('');
+    try {
+      store.removeAccount(acc.id);
+      setEditingId(null);
+      onChanged();
+    } catch (err) {
+      setEditError(err instanceof ValidationError ? err.message : '删除失败');
+    }
+  };
+
+  const isEditing = (acc: Account) => editingId === acc.id;
 
   return (
     <div className="panel">
@@ -102,24 +171,58 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
       <ul className="account-list">
         {store.state.accounts.map((a) => (
           <li key={a.id} className="account-item">
-            <div>
-              <strong>{a.name}</strong>
-              <span className="tag">{TYPE_LABEL[a.type]}</span>
-              {a.meta?.kind === 'credit' && (
-                <span className="meta">
-                  额度 ¥{formatMoney(a.meta.limit)} · 账单日 {a.meta.billDay} 号 · 还款日 {a.meta.dueDay} 号
-                </span>
-              )}
-              {a.meta?.kind === 'installment' && <span className="meta">总额度 ¥{formatMoney(a.meta.totalLimit)}</span>}
-              {a.meta?.kind === 'loan' && (
-                <span className="meta">
-                  月供 ¥{formatMoney(a.meta.monthlyPayment)} · 年利率 {(a.meta.annualRate * 100).toFixed(2)}% · 下期 {a.meta.nextDueDate}
-                </span>
-              )}
-            </div>
-            <span className={a.type === 'credit' || a.type === 'loan' || a.type === 'installment' ? 'negative' : ''}>
-              ¥{formatMoney(a.balance)}
-            </span>
+            {isEditing(a) ? (
+              <div className="account-edit-form">
+                <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="账户名" aria-label="编辑账户名" />
+                <input value={editBalance} onChange={(e) => setEditBalance(e.target.value)} placeholder="余额" inputMode="decimal" aria-label="编辑余额" />
+                {a.meta?.kind === 'credit' && (
+                  <>
+                    <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="额度" inputMode="decimal" aria-label="编辑额度" />
+                    <input value={editBillDay} onChange={(e) => setEditBillDay(e.target.value)} placeholder="账单日" inputMode="numeric" aria-label="编辑账单日" />
+                    <input value={editDueDay} onChange={(e) => setEditDueDay(e.target.value)} placeholder="还款日" inputMode="numeric" aria-label="编辑还款日" />
+                    <label className="check-row">
+                      <input type="checkbox" checked={editDueNextDay} onChange={(e) => setEditDueNextDay(e.target.checked)} />
+                      <span>还款日为账单次日</span>
+                    </label>
+                  </>
+                )}
+                {a.meta?.kind === 'installment' && (
+                  <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="总额度" inputMode="decimal" aria-label="编辑总额度" />
+                )}
+                <div className="edit-actions">
+                  <button type="button" className="btn-sm" onClick={() => saveEdit(a)}>保存</button>
+                  <button type="button" className="btn-sm" onClick={() => setEditingId(null)}>取消</button>
+                </div>
+                {editError && <p className="error-text">{editError}</p>}
+              </div>
+            ) : (
+              <>
+                <div className="account-info">
+                  <strong>{a.name}</strong>
+                  <span className="tag">{TYPE_LABEL[a.type]}</span>
+                  {a.meta?.kind === 'credit' && (
+                    <span className="meta">
+                      额度 ¥{formatMoney(a.meta.limit)} · 账单日 {a.meta.billDay} 号 · 还款日 {a.meta.dueNextDay ? '账单次日' : `${a.meta.dueDay} 号`}
+                    </span>
+                  )}
+                  {a.meta?.kind === 'installment' && <span className="meta">总额度 ¥{formatMoney(a.meta.totalLimit)}</span>}
+                  {a.meta?.kind === 'loan' && (
+                    <span className="meta">
+                      月供 ¥{formatMoney(a.meta.monthlyPayment)} · 年利率 {(a.meta.annualRate * 100).toFixed(2)}% · 下期 {a.meta.nextDueDate}
+                    </span>
+                  )}
+                </div>
+                <div className="account-right">
+                  <span className={a.type === 'credit' || a.type === 'loan' || a.type === 'installment' ? 'negative' : ''}>
+                    ¥{formatMoney(a.balance)}
+                  </span>
+                  <div className="account-actions">
+                    <button type="button" className="btn-sm" onClick={() => startEdit(a)}>编辑</button>
+                    <button type="button" className="btn-sm danger" onClick={() => deleteAccount(a)}>删除</button>
+                  </div>
+                </div>
+              </>
+            )}
           </li>
         ))}
         {store.state.accounts.length === 0 && <li className="empty">还没有账户，先在下方添加一个吧</li>}
@@ -143,8 +246,14 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
         )}
         {type === 'credit' && (
           <>
-            <input value={billDay} onChange={(e) => setBillDay(e.target.value)} placeholder="账单日" inputMode="numeric" aria-label="账单日" />
-            <input value={dueDay} onChange={(e) => setDueDay(e.target.value)} placeholder="还款日" inputMode="numeric" aria-label="还款日" />
+            <input value={billDay} onChange={(e) => setBillDay(e.target.value)} placeholder="账单日（1-31）" inputMode="numeric" aria-label="账单日" />
+            {!dueNextDay && (
+              <input value={dueDay} onChange={(e) => setDueDay(e.target.value)} placeholder="还款日（1-31）" inputMode="numeric" aria-label="还款日" />
+            )}
+            <label className="check-row">
+              <input type="checkbox" checked={dueNextDay} onChange={(e) => setDueNextDay(e.target.checked)} />
+              <span>还款日为账单次日</span>
+            </label>
           </>
         )}
         {type === 'loan' && (
@@ -152,13 +261,19 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
             <input value={principal} onChange={(e) => setPrincipal(e.target.value)} placeholder="贷款本金" inputMode="decimal" aria-label="贷款本金" />
             <input value={annualRate} onChange={(e) => setAnnualRate(e.target.value)} placeholder="年利率（如 0.049 表示 4.9%）" inputMode="decimal" aria-label="年利率" />
             <input value={termMonths} onChange={(e) => setTermMonths(e.target.value)} placeholder="期数（月）" inputMode="numeric" aria-label="期数" />
-            <input value={startDate} onChange={(e) => setStartDate(e.target.value)} placeholder="放款日 YYYY-MM-DD" type="date" aria-label="放款日" />
+            <input
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              placeholder="放款日 如 2026-01-15"
+              pattern="\d{4}-\d{2}-\d{2}"
+              aria-label="放款日"
+            />
             <select value={repaymentMethod} onChange={(e) => setRepaymentMethod(e.target.value as RepaymentMethod)} aria-label="还款方式">
               <option value="equal_interest">等额本息</option>
               <option value="equal_principal">等额本金</option>
               <option value="interest_only">先息后本</option>
             </select>
-            <input value={loanDueDay} onChange={(e) => setLoanDueDay(e.target.value)} placeholder="每月还款日" inputMode="numeric" aria-label="每月还款日" />
+            <input value={loanDueDay} onChange={(e) => setLoanDueDay(e.target.value)} placeholder="每月还款日（1-31）" inputMode="numeric" aria-label="每月还款日" />
           </>
         )}
         <button type="submit">添加</button>
