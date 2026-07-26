@@ -2,10 +2,11 @@ import { type FormEvent, useRef, useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
 import { AI_PROVIDERS, type AIConfig, clearAIConfig, defaultConfig, loadAIConfig, saveAIConfig } from '../core/ai/config';
 import { isValidStateShape } from '../core/store/store';
+import { isVaultEnabled, lock } from '../core/security/vault';
 import { store } from './appState';
 import { resetChatHistory } from './ChatView';
 
-export function SettingsView({ onChanged }: { onChanged: () => void }) {
+export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onLock?: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState('');
 
@@ -205,6 +206,25 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
       </div>
       {message && <p className="info-text">{message}</p>}
       <p className="meta">数据仅存储在本地浏览器，不会上传。建议定期导出备份。</p>
+
+      {isVaultEnabled() && (
+        <>
+          <h3>加密保险库</h3>
+          <div className="settings-actions">
+            <button
+              type="button"
+              onClick={() => {
+                lock();
+                store.encryptedPersist = undefined;
+                onLock?.();
+              }}
+            >
+              立即锁定
+            </button>
+          </div>
+          <p className="meta">锁定后需要重新输入密码才能查看数据。关闭加密请通过「忘记密码」流程操作。</p>
+        </>
+      )}
     </div>
   );
 }

@@ -3,10 +3,12 @@ import { bootstrap } from './ui/appState';
 import { AccountsView } from './ui/AccountsView';
 import { CalendarView } from './ui/CalendarView';
 import { ChatView } from './ui/ChatView';
+import { LockView } from './ui/LockView';
 import { SettingsView } from './ui/SettingsView';
 import { StatsView } from './ui/StatsView';
 import { TxListView } from './ui/TxListView';
 import { useStoreVersion } from './ui/useStoreVersion';
+import { isVaultEnabled } from './core/security/vault';
 
 type Tab = 'chat' | 'accounts' | 'calendar' | 'txs' | 'stats' | 'settings';
 
@@ -22,11 +24,28 @@ const TABS: Array<{ key: Tab; label: string }> = [
 export function App() {
   const [tab, setTab] = useState<Tab>('chat');
   const [version, bump] = useStoreVersion();
+  const [unlocked, setUnlocked] = useState(!isVaultEnabled());
 
   useEffect(() => {
-    if (bootstrap() > 0) bump();
+    if (unlocked && bootstrap() > 0) bump();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [unlocked]);
+
+  if (!unlocked) {
+    return (
+      <div className="app">
+        <header className="app-header">
+          <div>
+            <h1>智能记账</h1>
+            <p className="header-sub">AI LEDGER · 加密保险库</p>
+          </div>
+        </header>
+        <main>
+          <LockView onUnlocked={() => { setUnlocked(true); bump(); }} />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -40,9 +59,9 @@ export function App() {
         {tab === 'chat' && <ChatView onChanged={bump} />}
         {tab === 'accounts' && <AccountsView onChanged={bump} />}
         {tab === 'calendar' && <CalendarView version={version} />}
-        {tab === 'txs' && <TxListView />}
+        {tab === 'txs' && <TxListView onChanged={bump} />}
         {tab === 'stats' && <StatsView />}
-        {tab === 'settings' && <SettingsView onChanged={bump} />}
+        {tab === 'settings' && <SettingsView onChanged={bump} onLock={() => setUnlocked(false)} />}
       </main>
       <nav className="tab-bar">
         {TABS.map((t) => (

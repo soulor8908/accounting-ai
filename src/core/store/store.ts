@@ -146,6 +146,8 @@ export class Store {
   state: AppState;
   private undoStack: UndoEntry[] = [];
   private storage: StorageAdapter;
+  /** 加密持久化钩子：启用加密后由 vault 注入 */
+  encryptedPersist?: (json: string) => Promise<void>;
 
   constructor(storage?: StorageAdapter) {
     this.storage = storage ?? (typeof globalThis.localStorage !== 'undefined' ? new LocalStorageAdapter() : new MemoryStorage());
@@ -755,15 +757,25 @@ export class Store {
 
   // ---------- 持久化 ----------
   save(): void {
-    const payload: PersistedShape = { state: this.state, undoStack: this.undoStack.slice(-50) };
-    this.storage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    const json = this.serialize();
+    if (this.encryptedPersist) {
+      // 异步加密保存；调用方不阻塞
+      void this.encryptedPersist(json);
+      return;
+    }
+    this.storage.setItem(STORAGE_KEY, json);
   }
 
-  load(): boolean {
-    const raw = this.storage.getItem(STORAGE_KEY);
-    if (!raw) return false;
+  /** 序列化为 PersistedShape JSON */
+  serialize(): string {
+    const payload: PersistedShape = { state: this.state, undoStack: this.undoStack.slice(-50) };
+    return JSON.stringify(payload);
+  }
+
+  /** 从 PersistedShape JSON 加载（用于加密解锁后恢复内存数据） */
+  loadFromJson(json: string): boolean {
     try {
-      const payload = JSON.parse(raw) as PersistedShape;
+      const payload = JSON.parse(json) as PersistedShape;
       if (!isValidStateShape(payload.state)) return false;
       this.state = payload.state;
       this.undoStack = Array.isArray(payload.undoStack) ? payload.undoStack : [];
@@ -771,6 +783,12 @@ export class Store {
     } catch {
       return false;
     }
+  }
+
+  load(): boolean {
+    const raw = this.storage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    return this.loadFromJson(raw);
   }
 
   clearAll(): void {
