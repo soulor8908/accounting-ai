@@ -49,10 +49,26 @@ export function loadAIConfig(): AIConfig | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as AIConfig;
+    const cfg = JSON.parse(raw) as AIConfig;
+    // 迁移：旧版本会把 proxyUrl 强制设为已失效的 worker URL，
+    // 这里检测到就清掉，让新版默认直连 DeepSeek（原生支持 CORS）
+    if (cfg.proxyUrl && isKnownDeadProxy(cfg.proxyUrl)) {
+      cfg.proxyUrl = undefined;
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+      } catch {
+        // 忽略写入失败
+      }
+    }
+    return cfg;
   } catch {
     return null;
   }
+}
+
+/** 已知失效的代理 URL：旧版默认 worker 已下线 */
+function isKnownDeadProxy(url: string): boolean {
+  return url.includes('ai-proxy.470033918.workers.dev');
 }
 
 export function saveAIConfig(config: AIConfig): void {

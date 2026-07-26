@@ -87,4 +87,39 @@ describe('AI config', () => {
     expect(ids).toContain('mimo');
     expect(ids).toContain('custom');
   });
+
+  it('loadAIConfig 自动迁移：清除已失效的旧 worker 代理 URL', () => {
+    // 模拟旧版本保存的配置：proxyUrl 指向已下线的 worker
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        providerId: 'deepseek',
+        apiKey: 'sk-test',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        proxyUrl: 'https://ai-proxy.470033918.workers.dev',
+      }),
+    );
+    const cfg = loadAIConfig();
+    expect(cfg).not.toBeNull();
+    expect(cfg!.proxyUrl).toBeUndefined();
+    // localStorage 里也应该是被清理后的版本
+    const raw = JSON.parse(localStorage.getItem(KEY)!);
+    expect(raw.proxyUrl).toBeUndefined();
+  });
+
+  it('loadAIConfig 保留用户自定义的有效代理 URL', () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        providerId: 'custom',
+        apiKey: 'sk-test',
+        baseUrl: 'https://example.com',
+        model: 'm',
+        proxyUrl: 'https://my-own-proxy.example.com',
+      }),
+    );
+    const cfg = loadAIConfig();
+    expect(cfg!.proxyUrl).toBe('https://my-own-proxy.example.com');
+  });
 });
