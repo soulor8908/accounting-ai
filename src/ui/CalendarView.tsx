@@ -26,7 +26,7 @@ export function CalendarView({ version }: { version: number }) {
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
 
-  const { days, flows, dueItems } = useMemo(() => {
+  const { days, flows, dueItems, monthSummary } = useMemo(() => {
     const [y, m] = month.split('-').map(Number);
     const lastDay = new Date(y, m, 0).getDate();
     const firstWeekday = (new Date(y, m - 1, 1).getDay() + 6) % 7;
@@ -34,7 +34,13 @@ export function CalendarView({ version }: { version: number }) {
       ...Array<string | null>(firstWeekday).fill(null),
       ...Array.from({ length: lastDay }, (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`),
     ];
-    return { days, flows: store.getDailyFlows(month), dueItems: store.getDueItems(month, today) };
+    const summary = store.getMonthlySummary(month);
+    return {
+      days,
+      flows: store.getDailyFlows(month),
+      dueItems: store.getDueItems(month, today),
+      monthSummary: summary,
+    };
   }, [month, today, version]);
 
   const shiftMonth = (delta: number) => {
@@ -49,6 +55,10 @@ export function CalendarView({ version }: { version: number }) {
     if (!dueByDate.has(item.date)) dueByDate.set(item.date, []);
     dueByDate.get(item.date)!.push(item);
   }
+
+  // 本月总待还（汇总所有 dueItems 金额）+ 是否当前月
+  const dueTotal = dueItems.reduce((s, i) => s + i.amount, 0);
+  const isCurrentMonth = month === today.slice(0, 7);
 
   // 点击日期：查询当天流水
   const dayTxs = selectedDay ? store.state.transactions.filter((t) => t.date === selectedDay).sort((a, b) => (b.time ?? '').localeCompare(a.time ?? '')) : [];
@@ -112,6 +122,30 @@ export function CalendarView({ version }: { version: number }) {
               )}
             </button>
           ),
+        )}
+      </div>
+
+      {/* 月度汇总：每月总待还；当月额外显示收入与结余 */}
+      <div className="calendar-summary">
+        <div className="cal-sum-item">
+          <span className="cal-sum-label">本月待还</span>
+          <span className={`cal-sum-value ${dueTotal > 0 ? 'negative' : ''}`}>
+            ¥{formatMoney(dueTotal)}
+          </span>
+        </div>
+        {isCurrentMonth && (
+          <>
+            <div className="cal-sum-item">
+              <span className="cal-sum-label">当月收入</span>
+              <span className="cal-sum-value positive">¥{formatMoney(monthSummary.income)}</span>
+            </div>
+            <div className="cal-sum-item">
+              <span className="cal-sum-label">当月结余</span>
+              <span className={`cal-sum-value ${monthSummary.income - monthSummary.expense < 0 ? 'negative' : 'positive'}`}>
+                ¥{formatMoney(monthSummary.income - monthSummary.expense)}
+              </span>
+            </div>
+          </>
         )}
       </div>
 

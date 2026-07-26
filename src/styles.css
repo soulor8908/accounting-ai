@@ -291,7 +291,10 @@ main {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 46vh;
+  /* 输入区固定后，列表自适应高度并内部滚动 */
+  flex: 1;
+  min-height: 240px;
+  max-height: calc(100vh - 360px);
   overflow-y: auto;
   padding: 6px 2px;
   scrollbar-width: thin;
@@ -363,6 +366,25 @@ main {
   background: linear-gradient(0deg, var(--cinnabar-tint), var(--card));
 }
 
+/* 流式输出光标 */
+.bubble.streaming {
+  border-left-color: var(--pine);
+}
+
+.stream-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--pine);
+  animation: blink 1s steps(2, start) infinite;
+  font-weight: 700;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
 /* 快捷选项 */
 .quick-options {
   margin-top: 10px;
@@ -411,6 +433,80 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  animation: samples-slide-up 0.25s cubic-bezier(0.22, 0.9, 0.32, 1) both;
+}
+
+@keyframes samples-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 固定底栏：samples 折叠 + 输入框，整体 sticky 在 tab-bar 上方 */
+.chat-footer {
+  position: sticky;
+  bottom: 76px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 14px;
+  margin-top: 6px;
+  background: linear-gradient(180deg, transparent, var(--paper) 22%);
+}
+
+.samples-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.samples-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.18s ease;
+}
+
+.samples-toggle:hover {
+  border-color: var(--pine);
+  color: var(--pine);
+}
+
+.samples-toggle-icon {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.samples-wrap.open .samples-toggle {
+  color: var(--pine);
+  border-color: var(--pine);
+}
+
+.samples-wrap .samples {
+  margin-top: 8px;
+  padding: 8px 4px 4px;
+  background: var(--card-warm);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  max-height: 140px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  width: 100%;
 }
 
 /* 输入区 */
@@ -664,6 +760,12 @@ main {
 .error-text {
   color: var(--cinnabar);
   font-size: 13px;
+}
+
+.success-text {
+  color: var(--jade);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .info-text {
@@ -954,6 +1056,53 @@ main {
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* 月度汇总条 */
+.calendar-summary {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--card-warm);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.cal-sum-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cal-sum-item + .cal-sum-item {
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.cal-sum-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.cal-sum-value {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.cal-sum-value.positive {
+  color: var(--jade);
+}
+
+.cal-sum-value.negative {
+  color: var(--cinnabar);
 }
 
 .due-item.overdue,

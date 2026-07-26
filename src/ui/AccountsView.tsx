@@ -154,6 +154,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
 
   const deleteAccount = (acc: Account) => {
     setEditError('');
+    if (!window.confirm(`确定删除账户「${acc.name}」？\n余额 ¥${formatMoney(acc.balance)}，删除后无法恢复。`)) return;
     try {
       store.removeAccount(acc.id);
       setEditingId(null);

@@ -1,7 +1,14 @@
 /**
- * AI 客户端：OpenAI 兼容 API + Function Calling 循环
+ * AI 客户端：OpenAI 兼容 API + Function Calling 循环（SSE 流式输出）
+ *
+ * 设计要点（卡帕西视角）：
+ * - 流式优先：用 ReadableStream + TextDecoder 增量解析 SSE，首字延迟低
+ * - 工具调用累积：tool_calls 在流式下分片到达，按 index 聚合 name/arguments
+ * - 超时与错误显式化：AbortController 防止 worker 不可达时静默挂起
+ * - 状态机收敛：onThinking → onToolExecuting → onToolResult → onMessageStart → onMessageChunk → onMessageEnd
  */
 import type { AIConfig } from './config';
+import { DEFAULT_PROXY } from './config';
 import { AI_TOOLS, executeTool, type ToolCall, type ToolResult } from './tools';
 import { store } from '../../ui/appState';
 import { formatMoney } from '../engine/engine';
@@ -19,6 +26,8 @@ export interface ChatMessage {
 }
 
 const MAX_TOOL_ROUNDS = 6;
+/** 单次请求超时（ms）：worker 不可达或模型卡顿时强制中断 */
+const REQUEST_TIMEOUT_MS = 60_000;
 
 /** 构建系统提示词 */
 function buildSystemPrompt(): string {
@@ -39,6 +48,7 @@ function buildSystemPrompt(): string {
 ${accounts}
 
 你可以调用工具来完成用户的请求。如果用户的话不够明确，可以先用 list_transactions 或 query_balance 查看当前数据后再操作。
+重要：执行 delete_transaction 删除流水时，必须先用 descriptionKeyword 或 id 查清楚，删除前在回复中向用户确认。
 回复请简洁，用中文。金额用 ¥ 符号。`;
 }
 
@@ -46,11 +56,23 @@ export interface AIStreamCallback {
   onThinking?: () => void;
   onToolExecuting?: (name: string) => void;
   onToolResult?: (result: ToolResult) => void;
-  onMessage?: (text: string) => void;
+  /** 最终文本开始输出（替换 thinking/tool 气泡，建立新 AI 气泡） */
+  onMessageStart?: () => void;
+  /** 流式增量：delta 是本次片段，full 是累计文本 */
+  onMessageChunk?: (delta: string, full: string) => void;
+  /** 最终文本输出结束 */
+  onMessageEnd?: () => void;
   onError?: (error: string) => void;
 }
 
-/** 发送消息给 AI，自动处理 function calling 循环 */
+interface StreamResult {
+  content: string;
+  toolCalls: Array<{ id: string; name: string; arguments: string }>;
+  /** 流式过程中是否已经触发 onMessageStart/Chunk/End（避免上层重复交付） */
+  delivered: boolean;
+}
+
+/** 发送消息给 AI，自动处理 function calling 循环（流式） */
 export async function chatWithAI(
   userMessage: string,
   history: ChatMessage[],
@@ -67,63 +89,50 @@ export async function chatWithAI(
     ];
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const response = await callAI(config, messages);
-      if (!response.ok) {
-        const errText = await response.text();
-        let errMsg = `API 请求失败 (${response.status})`;
-        try {
-          const errJson = JSON.parse(errText);
-          errMsg = errJson.error?.message || errJson.message || errMsg;
-        } catch {
-          if (errText) errMsg = errText.slice(0, 200);
+      const result = await callAIStream(config, messages, callbacks);
+
+      // 有工具调用：执行后继续下一轮（流式过程中如有 commentary 已交付，不重复）
+      if (result.toolCalls.length > 0) {
+        const assistantMsg: ChatMessage = {
+          role: 'assistant',
+          content: result.content || '',
+          tool_calls: result.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: 'function' as const,
+            function: { name: tc.name, arguments: tc.arguments || '{}' },
+          })),
+        };
+        messages.push(assistantMsg);
+
+        for (const tc of result.toolCalls) {
+          callbacks.onToolExecuting?.(tc.name);
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            parsedArgs = JSON.parse(tc.arguments || '{}');
+          } catch {
+            parsedArgs = {};
+          }
+          const call: ToolCall = { name: tc.name, arguments: parsedArgs };
+          const toolResult = executeTool(call);
+          callbacks.onToolResult?.(toolResult);
+          messages.push({
+            role: 'tool',
+            content: toolResult.result,
+            tool_call_id: tc.id,
+          });
         }
-        callbacks.onError?.(errMsg);
-        return;
+        callbacks.onThinking?.();
+        continue;
       }
 
-      const data = await response.json();
-      const assistantMsg = data.choices?.[0]?.message;
-      if (!assistantMsg) {
-        callbacks.onError?.('AI 返回数据格式异常');
-        return;
+      // 无工具调用：最终回复。若流式已交付则不再重复，否则补交付（JSON 降级或空流）
+      if (!result.delivered) {
+        const text = result.content || '（AI 未返回内容）';
+        callbacks.onMessageStart?.();
+        callbacks.onMessageChunk?.(text, text);
+        callbacks.onMessageEnd?.();
       }
-
-      messages.push(assistantMsg);
-
-      // 如果没有工具调用，返回最终文本
-      if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
-        if (assistantMsg.content) {
-          callbacks.onMessage?.(assistantMsg.content);
-        } else {
-          callbacks.onMessage?.('（AI 未返回内容）');
-        }
-        return;
-      }
-
-      // 执行所有工具调用
-      for (const tc of assistantMsg.tool_calls) {
-        const toolName = tc.function.name;
-        callbacks.onToolExecuting?.(toolName);
-
-        let parsedArgs: Record<string, unknown> = {};
-        try {
-          parsedArgs = JSON.parse(tc.function.arguments || '{}');
-        } catch {
-          parsedArgs = {};
-        }
-
-        const call: ToolCall = { name: toolName, arguments: parsedArgs };
-        const result = executeTool(call);
-        callbacks.onToolResult?.(result);
-
-        messages.push({
-          role: 'tool',
-          content: result.result,
-          tool_call_id: tc.id,
-        });
-      }
-      // 继续下一轮，让 AI 处理工具结果
-      callbacks.onThinking?.();
+      return;
     }
 
     callbacks.onError?.('工具调用轮次超限，请简化请求');
@@ -133,29 +142,218 @@ export async function chatWithAI(
   }
 }
 
-/** 调用 AI API（通过 Worker 代理或直连） */
-async function callAI(config: AIConfig, messages: ChatMessage[]): Promise<Response> {
+/** 调用 AI API（通过 Worker 代理或直连），流式解析 SSE */
+async function callAIStream(
+  config: AIConfig,
+  messages: ChatMessage[],
+  callbacks: AIStreamCallback,
+): Promise<StreamResult> {
   const body = {
     model: config.model,
     messages,
     tools: AI_TOOLS,
     temperature: 0.7,
-    stream: false,
+    stream: true,
   };
 
-  // 通过 Worker 代理（解决 CORS）
-  const proxyUrl = config.proxyUrl || '/ai-proxy';
-  const targetUrl = `${config.baseUrl}/v1/chat/completions`;
+  const proxyUrl = config.proxyUrl || DEFAULT_PROXY;
+  const targetUrl = `${config.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
 
-  const resp = await fetch(proxyUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Target-URL': targetUrl,
-      'X-API-Key': config.apiKey,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  return resp;
+  let resp: Response;
+  try {
+    resp = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Target-URL': targetUrl,
+        'X-API-Key': config.apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    clearTimeout(timeout);
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`请求超时（${REQUEST_TIMEOUT_MS / 1000}s），请检查网络或代理`);
+    }
+    throw new Error(`网络请求失败：${e instanceof Error ? e.message : '未知'}`);
+  }
+  clearTimeout(timeout);
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    let errMsg = `API 请求失败 (HTTP ${resp.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      errMsg = errJson.error?.message || errJson.message || errMsg;
+      // 结构化错误也带上状态码，方便排查
+      if (!errMsg.includes(String(resp.status))) errMsg = `${errMsg} (HTTP ${resp.status})`;
+    } catch {
+      if (errText) errMsg = `${errText.slice(0, 200)} (HTTP ${resp.status})`;
+    }
+    throw new Error(errMsg);
+  }
+
+  // 代理可能不支持流式（content-type 非 event-stream 或 body 为空），降级为 JSON 一次性解析
+  const contentType = resp.headers.get('content-type') || '';
+  const isEventStream = contentType.includes('event-stream');
+  if (!resp.body || !isEventStream) {
+    const data = await resp.json();
+    const msg = data.choices?.[0]?.message;
+    if (!msg) throw new Error('AI 返回数据格式异常');
+    const content: string = msg.content ?? '';
+    const toolCalls: StreamResult['toolCalls'] = (msg.tool_calls ?? []).map(
+      (tc: { id: string; function: { name: string; arguments: string } }) => ({
+        id: tc.id,
+        name: tc.function.name,
+        arguments: tc.function.arguments ?? '{}',
+      }),
+    );
+    // JSON 降级路径未触发流式回调，delivered=false 让上层补交付
+    return { content, toolCalls, delivered: false };
+  }
+
+  return parseSSEStream(resp.body, callbacks);
+}
+
+/** 解析 SSE 流：data: {...}\n\n，以 [DONE] 结束 */
+async function parseSSEStream(
+  body: ReadableStream<Uint8Array>,
+  callbacks: AIStreamCallback,
+): Promise<StreamResult> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let contentBuf = '';
+  let messageStarted = false;
+  const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
+
+  const flushToolCall = (idx: number, entry: { id: string; name: string; arguments: string }) => {
+    if (!toolCallMap.has(idx)) toolCallMap.set(idx, { id: '', name: '', arguments: '' });
+    const existing = toolCallMap.get(idx)!;
+    if (entry.id) existing.id = entry.id;
+    if (entry.name) existing.name += entry.name;
+    if (entry.arguments) existing.arguments += entry.arguments;
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+      let json: { choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }> };
+      try {
+        json = JSON.parse(data);
+      } catch {
+        continue; // 忽略半包
+      }
+      const delta = json.choices?.[0]?.delta;
+      if (!delta) continue;
+
+      if (delta.content) {
+        if (!messageStarted) {
+          messageStarted = true;
+          callbacks.onMessageStart?.();
+        }
+        contentBuf += delta.content;
+        callbacks.onMessageChunk?.(delta.content, contentBuf);
+      }
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          flushToolCall(idx, {
+            id: tc.id ?? '',
+            name: tc.function?.name ?? '',
+            arguments: tc.function?.arguments ?? '',
+          });
+        }
+      }
+    }
+  }
+
+  if (messageStarted) callbacks.onMessageEnd?.();
+
+  const toolCalls = [...toolCallMap.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, v]) => v)
+    .filter((v) => v.name);
+
+  // messageStarted=true 表示流式过程中已经触发 onMessageStart/Chunk/End，
+  // 上层（chatWithAI）不应再补交付，避免重复输出
+  return { content: contentBuf, toolCalls, delivered: messageStarted };
+}
+
+/** 测试 AI 配置是否可用（轻量请求，非流式） */
+export async function testAIConfig(
+  config: AIConfig,
+): Promise<{ ok: boolean; message: string }> {
+  if (!config.apiKey.trim()) {
+    return { ok: false, message: '请先填写 API Key' };
+  }
+  if (!config.model.trim()) {
+    return { ok: false, message: '请先填写模型名称' };
+  }
+
+  const body = {
+    model: config.model,
+    messages: [{ role: 'user', content: '回复两个字：成功' }],
+    stream: false,
+    max_tokens: 16,
+    temperature: 0,
+  };
+
+  const proxyUrl = config.proxyUrl || DEFAULT_PROXY;
+  const targetUrl = `${config.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const resp = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Target-URL': targetUrl,
+        'X-API-Key': config.apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      let msg = `HTTP ${resp.status}`;
+      try {
+        const j = JSON.parse(txt);
+        msg = j.error?.message || j.message || msg;
+      } catch {
+        if (txt) msg = txt.slice(0, 200);
+      }
+      return { ok: false, message: msg };
+    }
+
+    const data = await resp.json();
+    const content: string | undefined = data.choices?.[0]?.message?.content;
+    if (!content) {
+      return { ok: false, message: 'AI 返回为空，请检查模型名称或 Base URL' };
+    }
+    return { ok: true, message: `连接成功，模型回复：${content.slice(0, 60)}` };
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { ok: false, message: '请求超时（15s），请检查网络或代理地址' };
+    }
+    const msg = e instanceof Error ? e.message : '未知错误';
+    return { ok: false, message: `网络请求失败：${msg}` };
+  } finally {
+    clearTimeout(timeout);
+  }
 }

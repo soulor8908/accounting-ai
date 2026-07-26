@@ -63,12 +63,13 @@ export const AI_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'delete_transaction',
-      description: '删除指定流水记录（按ID或描述模糊匹配）',
+      description: '删除指定流水记录（按ID或描述模糊匹配）。必须先不带 confirm 调用获取预览，用户确认后再带 confirm=true 执行删除。',
       parameters: {
         type: 'object',
         properties: {
           id: { type: 'string', description: '流水ID（可选）' },
           descriptionKeyword: { type: 'string', description: '描述关键词（可选，用于模糊查找）' },
+          confirm: { type: 'boolean', description: '是否确认执行删除（首次调用应为 false 或不传，返回预览；用户确认后传 true）' },
         },
       },
     },
@@ -272,21 +273,37 @@ function execListTransactions(args: Record<string, unknown>): ToolResult {
 function execDeleteTransaction(args: Record<string, unknown>): ToolResult {
   const id = args.id as string | undefined;
   const keyword = args.descriptionKeyword as string | undefined;
+  const confirm = args.confirm === true;
 
-  let tx;
+  // 定位目标流水
+  let target: Transaction | undefined;
   if (id) {
-    tx = store.deleteTransaction(id);
-    if (!tx) return { name: 'delete_transaction', result: `没找到ID为 ${id} 的流水`, success: false };
+    target = store.state.transactions.find((t: Transaction) => t.id === id);
+    if (!target) return { name: 'delete_transaction', result: `没找到ID为 ${id} 的流水`, success: false };
   } else if (keyword) {
     const found = store.state.transactions.filter((t: Transaction) => (t.description || t.category).includes(keyword));
     if (found.length === 0) return { name: 'delete_transaction', result: `没找到包含「${keyword}」的流水`, success: false };
-    if (found.length > 1) return { name: 'delete_transaction', result: `找到 ${found.length} 笔包含「${keyword}」的流水，请提供更精确的信息`, success: false };
-    tx = store.deleteTransaction(found[0].id);
+    if (found.length > 1) {
+      const preview = found.slice(0, 5).map((t) => `${t.date} ${t.description || t.category} ¥${formatMoney(t.amount)}（id=${t.id}）`).join('\n');
+      return { name: 'delete_transaction', result: `找到 ${found.length} 笔包含「${keyword}」的流水，请提供更精确的信息：\n${preview}`, success: false };
+    }
+    target = found[0];
   } else {
     return { name: 'delete_transaction', result: '请提供流水ID或描述关键词', success: false };
   }
 
-  return { name: 'delete_transaction', result: `已删除：${tx!.date} ${tx!.description || tx!.category} ¥${formatMoney(tx!.amount)}`, success: true };
+  // 二次确认：未确认时只返回预览
+  if (!confirm) {
+    return {
+      name: 'delete_transaction',
+      result: `即将删除：${target.date} ${target.description || target.category} ¥${formatMoney(target.amount)}（id=${target.id}）。请向用户确认后，带 confirm=true 再次调用以执行删除。`,
+      success: true,
+    };
+  }
+
+  const tx = store.deleteTransaction(target.id);
+  if (!tx) return { name: 'delete_transaction', result: `删除失败：流水已不存在`, success: false };
+  return { name: 'delete_transaction', result: `已删除：${tx.date} ${tx.description || tx.category} ¥${formatMoney(tx.amount)}`, success: true };
 }
 
 function execUpdateTransaction(args: Record<string, unknown>): ToolResult {

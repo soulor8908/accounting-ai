@@ -56,7 +56,13 @@ export function loadAIConfig(): AIConfig | null {
 }
 
 export function saveAIConfig(config: AIConfig): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  // 兜底 proxyUrl：旧版保存的配置可能缺该字段，导致回退到 /ai-proxy 在静态部署上 404
+  const normalized: AIConfig = {
+    ...config,
+    proxyUrl: config.proxyUrl || DEFAULT_PROXY,
+    baseUrl: config.baseUrl.replace(/\/$/, ''),
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
 }
 
 export function clearAIConfig(): void {
