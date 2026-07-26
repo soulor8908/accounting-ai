@@ -19,7 +19,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -28,9 +28,23 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check Cloudflare secrets
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CF_TOKEN" ] || [ -z "$CF_ACCOUNT" ]; then
+            echo "::error::缺少 Cloudflare secrets。请在 GitHub Settings → Secrets and variables → Actions 添加："
+            echo "::error::  CLOUDFLARE_API_TOKEN   - Cloudflare API Token（需 Pages:Edit 权限）"
+            echo "::error::  CLOUDFLARE_ACCOUNT_ID  - Cloudflare Account ID（控制台右下角）"
+            exit 1
+          fi
+          echo "✓ Cloudflare secrets 已配置"
+
       - name: Publish to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=accounting-ai
+          wranglerVersion: '4.14.0'
+          command: pages deploy dist --project-name=accounting-ai --commit-dirty=true
