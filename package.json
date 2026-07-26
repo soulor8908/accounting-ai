@@ -6,7 +6,7 @@
   "description": "智能记账AI助手 — 自然语言驱动的本地优先个人财务管理应用",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc -p tsconfig.app.json --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

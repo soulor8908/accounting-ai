@@ -56,10 +56,10 @@ export function loadAIConfig(): AIConfig | null {
 }
 
 export function saveAIConfig(config: AIConfig): void {
-  // 兜底 proxyUrl：旧版保存的配置可能缺该字段，导致回退到 /ai-proxy 在静态部署上 404
+  // DeepSeek 原生支持 CORS，默认直连即可；仅当用户显式配置 proxyUrl 时才走代理
   const normalized: AIConfig = {
     ...config,
-    proxyUrl: config.proxyUrl || DEFAULT_PROXY,
+    proxyUrl: config.proxyUrl?.trim() || undefined,
     baseUrl: config.baseUrl.replace(/\/$/, ''),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
@@ -76,9 +76,9 @@ export function defaultConfig(): AIConfig {
     apiKey: '',
     baseUrl: preset.baseUrl,
     model: preset.defaultModel,
-    proxyUrl: 'https://ai-proxy.470033918.workers.dev',
+    // 不设 proxyUrl，默认直连 DeepSeek 官方 API（支持 CORS）
   };
 }
 
-/** 默认 Worker 代理 URL */
-export const DEFAULT_PROXY = 'https://ai-proxy.470033918.workers.dev';
+/** 默认 Worker 代理 URL（已废弃，保留兼容旧配置） */
+export const DEFAULT_PROXY = '';

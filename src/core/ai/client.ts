@@ -8,7 +8,6 @@
  * - 状态机收敛：onThinking → onToolExecuting → onToolResult → onMessageStart → onMessageChunk → onMessageEnd
  */
 import type { AIConfig } from './config';
-import { DEFAULT_PROXY } from './config';
 import { AI_TOOLS, executeTool, type ToolCall, type ToolResult } from './tools';
 import { store } from '../../ui/appState';
 import { formatMoney } from '../engine/engine';
@@ -54,6 +53,8 @@ ${accounts}
 
 export interface AIStreamCallback {
   onThinking?: () => void;
+  /** 推理模型（如 deepseek-v4-flash）的思考过程增量；可选展示给用户 */
+  onReasoning?: (delta: string, full: string) => void;
   onToolExecuting?: (name: string) => void;
   onToolResult?: (result: ToolResult) => void;
   /** 最终文本开始输出（替换 thinking/tool 气泡，建立新 AI 气泡） */
@@ -142,7 +143,44 @@ export async function chatWithAI(
   }
 }
 
-/** 调用 AI API（通过 Worker 代理或直连），流式解析 SSE */
+/** 构造请求参数：直连或代理。DeepSeek 原生支持 CORS，默认直连即可 */
+function buildFetchParams(config: AIConfig, body: unknown, signal: AbortSignal): { url: string; init: RequestInit } {
+  const targetUrl = `${config.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+  const proxyUrl = config.proxyUrl?.trim();
+  const bodyStr = JSON.stringify(body);
+
+  if (proxyUrl) {
+    // 走 Worker 代理：自定义 header 转发目标 URL 与 API Key
+    return {
+      url: proxyUrl,
+      init: {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Target-URL': targetUrl,
+          'X-API-Key': config.apiKey,
+        },
+        body: bodyStr,
+        signal,
+      },
+    };
+  }
+  // 直连：标准 OpenAI 兼容请求头
+  return {
+    url: targetUrl,
+    init: {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+      body: bodyStr,
+      signal,
+    },
+  };
+}
+
+/** 调用 AI API（直连或通过 Worker 代理），流式解析 SSE */
 async function callAIStream(
   config: AIConfig,
   messages: ChatMessage[],
@@ -156,24 +194,13 @@ async function callAIStream(
     stream: true,
   };
 
-  const proxyUrl = config.proxyUrl || DEFAULT_PROXY;
-  const targetUrl = `${config.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   let resp: Response;
   try {
-    resp = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Target-URL': targetUrl,
-        'X-API-Key': config.apiKey,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    const { url, init } = buildFetchParams(config, body, controller.signal);
+    resp = await fetch(url, init);
   } catch (e) {
     clearTimeout(timeout);
     if (e instanceof Error && e.name === 'AbortError') {
@@ -205,6 +232,9 @@ async function callAIStream(
     const msg = data.choices?.[0]?.message;
     if (!msg) throw new Error('AI 返回数据格式异常');
     const content: string = msg.content ?? '';
+    // 推理模型：reasoning_content 单独走 onReasoning（一次性交付）
+    const reasoning: string | undefined = msg.reasoning_content;
+    if (reasoning) callbacks.onReasoning?.(reasoning, reasoning);
     const toolCalls: StreamResult['toolCalls'] = (msg.tool_calls ?? []).map(
       (tc: { id: string; function: { name: string; arguments: string } }) => ({
         id: tc.id,
@@ -219,7 +249,7 @@ async function callAIStream(
   return parseSSEStream(resp.body, callbacks);
 }
 
-/** 解析 SSE 流：data: {...}\n\n，以 [DONE] 结束 */
+/** 解析 SSE 流：data: {...}\n\n，以 [DONE] 结束。支持推理模型的 reasoning_content 字段 */
 async function parseSSEStream(
   body: ReadableStream<Uint8Array>,
   callbacks: AIStreamCallback,
@@ -228,6 +258,7 @@ async function parseSSEStream(
   const decoder = new TextDecoder();
   let buffer = '';
   let contentBuf = '';
+  let reasoningBuf = '';
   let messageStarted = false;
   const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
 
@@ -250,7 +281,7 @@ async function parseSSEStream(
       if (!line.startsWith('data:')) continue;
       const data = line.slice(5).trim();
       if (!data || data === '[DONE]') continue;
-      let json: { choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }> };
+      let json: { choices?: Array<{ delta?: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }> };
       try {
         json = JSON.parse(data);
       } catch {
@@ -259,6 +290,11 @@ async function parseSSEStream(
       const delta = json.choices?.[0]?.delta;
       if (!delta) continue;
 
+      // 推理模型：思考过程增量（不进入主气泡）
+      if (delta.reasoning_content) {
+        reasoningBuf += delta.reasoning_content;
+        callbacks.onReasoning?.(delta.reasoning_content, reasoningBuf);
+      }
       if (delta.content) {
         if (!messageStarted) {
           messageStarted = true;
@@ -307,27 +343,18 @@ export async function testAIConfig(
     model: config.model,
     messages: [{ role: 'user', content: '回复两个字：成功' }],
     stream: false,
-    max_tokens: 16,
+    // 推理模型（如 deepseek-v4-flash）会先输出 reasoning_content 占用 token，
+    // max_tokens 太小会导致正式 content 被截断，测试误判为失败
+    max_tokens: 512,
     temperature: 0,
   };
 
-  const proxyUrl = config.proxyUrl || DEFAULT_PROXY;
-  const targetUrl = `${config.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
   try {
-    const resp = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Target-URL': targetUrl,
-        'X-API-Key': config.apiKey,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    const { url, init } = buildFetchParams(config, body, controller.signal);
+    const resp = await fetch(url, init);
 
     if (!resp.ok) {
       const txt = await resp.text().catch(() => '');
@@ -342,14 +369,21 @@ export async function testAIConfig(
     }
 
     const data = await resp.json();
-    const content: string | undefined = data.choices?.[0]?.message?.content;
+    const msgObj = data.choices?.[0]?.message;
+    const content: string | undefined = msgObj?.content;
+    const reasoning: string | undefined = msgObj?.reasoning_content;
+    const finishReason: string | undefined = data.choices?.[0]?.finish_reason;
     if (!content) {
-      return { ok: false, message: 'AI 返回为空，请检查模型名称或 Base URL' };
+      // 推理模型可能因 length 截断
+      if (finishReason === 'length' && reasoning) {
+        return { ok: false, message: `推理 token 不足，请增大 max_tokens（当前已思考 ${reasoning.length} 字）` };
+      }
+      return { ok: false, message: 'AI 返回 content 为空，请检查模型名称或 Base URL' };
     }
     return { ok: true, message: `连接成功，模型回复：${content.slice(0, 60)}` };
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
-      return { ok: false, message: '请求超时（15s），请检查网络或代理地址' };
+      return { ok: false, message: '请求超时（30s），请检查网络或代理地址' };
     }
     const msg = e instanceof Error ? e.message : '未知错误';
     return { ok: false, message: `网络请求失败：${msg}` };

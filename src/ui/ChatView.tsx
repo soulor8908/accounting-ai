@@ -115,6 +115,17 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
             pushAI('思考中...', 'thinking');
           }
         },
+        onReasoning: (_delta, full) => {
+          // 推理模型的思考过程，更新到思考气泡
+          setMessages((ms) => {
+            const copy = [...ms];
+            const last = copy[copy.length - 1];
+            if (last?.status === 'thinking') {
+              copy[copy.length - 1] = { ...last, text: `💭 ${full.slice(-200)}` };
+            }
+            return copy;
+          });
+        },
         onToolExecuting: (name) => {
           setMessages((ms) => {
             const copy = [...ms];

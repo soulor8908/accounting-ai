@@ -217,20 +217,37 @@ describe('chatWithAI - 降级路径（resp.body 为空）', () => {
   });
 });
 
-describe('chatWithAI - proxyUrl 兜底', () => {
+describe('chatWithAI - 直连模式', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('config 无 proxyUrl 时使用 DEFAULT_PROXY', async () => {
-    const { DEFAULT_PROXY } = await import('../../../src/core/ai/config');
-    const cfg: AIConfig = { ...CONFIG, proxyUrl: undefined };
+  it('config 无 proxyUrl 时直连 targetUrl 并使用 Authorization 头', async () => {
+    const cfg: AIConfig = { ...CONFIG, proxyUrl: undefined, apiKey: 'sk-direct-123' };
     const fetchMock = vi.fn().mockResolvedValue(
       sseResponse([JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })]),
     );
     vi.stubGlobal('fetch', fetchMock);
     await chatWithAI('hi', [], cfg, makeCallbacks());
-    expect(fetchMock.mock.calls[0][0]).toBe(DEFAULT_PROXY);
+    // 直连 targetUrl，不走代理
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/chat/completions');
+    // 使用标准 Authorization 头，而非自定义 X-API-Key
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer sk-direct-123');
+    expect(headers['X-API-Key']).toBeUndefined();
+  });
+
+  it('config 有 proxyUrl 时走代理并使用 X-API-Key 头', async () => {
+    const cfg: AIConfig = { ...CONFIG, proxyUrl: 'https://proxy.example.com', apiKey: 'sk-proxy-456' };
+    const fetchMock = vi.fn().mockResolvedValue(
+      sseResponse([JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await chatWithAI('hi', [], cfg, makeCallbacks());
+    expect(fetchMock.mock.calls[0][0]).toBe('https://proxy.example.com');
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers['X-API-Key']).toBe('sk-proxy-456');
+    expect(headers['X-Target-URL']).toBe('https://api.deepseek.com/v1/chat/completions');
   });
 });
 
@@ -274,11 +291,30 @@ describe('testAIConfig', () => {
   it('空内容返回 ok=false', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: { content: '' } }] })),
+      vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: { content: '' }, finish_reason: 'stop' }] })),
     );
     const r = await testAIConfig(CONFIG);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('返回为空');
+    expect(r.message).toContain('content 为空');
+  });
+
+  it('推理模型因 length 截断 content 为空时给出明确提示', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          choices: [
+            {
+              message: { content: '', reasoning_content: '正在思考...' },
+              finish_reason: 'length',
+            },
+          ],
+        }),
+      ),
+    );
+    const r = await testAIConfig(CONFIG);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('max_tokens');
   });
 
   it('网络异常返回 ok=false', async () => {
@@ -288,12 +324,13 @@ describe('testAIConfig', () => {
     expect(r.message).toContain('网络请求失败');
   });
 
-  it('非流式请求 body stream:false + max_tokens 限制', async () => {
+  it('非流式请求 body stream:false + max_tokens 足够推理模型输出', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
     vi.stubGlobal('fetch', fetchMock);
     await testAIConfig(CONFIG);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.stream).toBe(false);
-    expect(body.max_tokens).toBe(16);
+    // 推理模型（如 deepseek-v4-flash）会先用 token 输出 reasoning，max_tokens 需足够大
+    expect(body.max_tokens).toBeGreaterThanOrEqual(256);
   });
 });

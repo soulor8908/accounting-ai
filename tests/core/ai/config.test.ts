@@ -37,8 +37,7 @@ describe('AI config', () => {
     expect(loaded!.model).toBe('deepseek-v4-flash');
   });
 
-  it('saveAIConfig 兜底 proxyUrl：旧配置缺该字段时补全为 DEFAULT_PROXY', async () => {
-    const { DEFAULT_PROXY } = await import('../../../src/core/ai/config');
+  it('saveAIConfig 默认不走代理：旧配置缺 proxyUrl 时不补全', () => {
     const cfg: AIConfig = {
       providerId: 'custom',
       apiKey: 'sk-x',
@@ -48,7 +47,8 @@ describe('AI config', () => {
     };
     saveAIConfig(cfg);
     const raw = JSON.parse(localStorage.getItem(KEY)!);
-    expect(raw.proxyUrl).toBe(DEFAULT_PROXY);
+    // DeepSeek 原生支持 CORS，默认直连，proxyUrl 不再兜底
+    expect(raw.proxyUrl).toBeUndefined();
   });
 
   it('saveAIConfig 规整 baseUrl 末尾斜杠', () => {
@@ -74,12 +74,11 @@ describe('AI config', () => {
     expect(loadAIConfig()).toBeNull();
   });
 
-  it('defaultConfig 返回首个预设且带 proxyUrl', async () => {
-    const { DEFAULT_PROXY } = await import('../../../src/core/ai/config');
+  it('defaultConfig 返回首个预设，默认直连无 proxyUrl', () => {
     const cfg = defaultConfig();
     expect(cfg.providerId).toBe(AI_PROVIDERS[0].id);
     expect(cfg.apiKey).toBe('');
-    expect(cfg.proxyUrl).toBe(DEFAULT_PROXY);
+    expect(cfg.proxyUrl).toBeUndefined();
   });
 
   it('AI_PROVIDERS 至少包含 deepseek / mimo / custom', () => {
