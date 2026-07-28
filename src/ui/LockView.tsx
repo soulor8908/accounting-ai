@@ -20,6 +20,7 @@ import {
 import { STORAGE_KEY as AI_CONFIG_STORAGE_KEY } from '../core/ai/config';
 import { CHAT_STORAGE_KEY } from '../core/store/chatStore';
 import { MEMORY_STORAGE_KEY } from '../core/store/memory';
+import { createEmptyState } from '../core/types';
 import { chatStore, memoryStore, store } from './appState';
 
 type Mode = 'unlock' | 'setup' | 'resetAnswer' | 'resetRecovery' | 'disable';
@@ -233,7 +234,8 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
     lock();
     clearEncryptedPersistHooks();
     // 清空内存中的 store state（含聊天/记忆/AI 配置缓存）
-    store.state = JSON.parse('{"schemaVersion":2,"accounts":[],"transactions":[],"installmentPlans":[],"recurringRules":[]}');
+    // 使用工厂函数避免硬编码 schemaVersion，确保与 types.ts 的 SCHEMA_VERSION 对齐
+    store.state = createEmptyState();
     chatStore.clearInMemoryData();
     memoryStore.clearInMemoryData();
     setPwd('');
