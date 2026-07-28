@@ -12,19 +12,40 @@ import { isVaultEnabled } from './core/security/vault';
 
 type Tab = 'chat' | 'accounts' | 'calendar' | 'txs' | 'stats' | 'settings';
 
-const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'chat', label: '对话' },
-  { key: 'accounts', label: '账户' },
-  { key: 'calendar', label: '日历' },
-  { key: 'txs', label: '流水' },
-  { key: 'stats', label: '统计' },
-  { key: 'settings', label: '设置' },
+const TABS: Array<{ key: Tab; label: string; path: string }> = [
+  { key: 'chat', label: '对话', path: '/' },
+  { key: 'accounts', label: '账户', path: '/accounts' },
+  { key: 'calendar', label: '日历', path: '/calendar' },
+  { key: 'txs', label: '流水', path: '/transactions' },
+  { key: 'stats', label: '统计', path: '/stats' },
+  { key: 'settings', label: '设置', path: '/settings' },
 ];
 
+/** 从 URL pathname 恢复 Tab，非法路径回退到 chat */
+function tabFromPath(pathname: string): Tab {
+  const found = TABS.find((t) => t.path === pathname);
+  return found ? found.key : 'chat';
+}
+
 export function App() {
-  const [tab, setTab] = useState<Tab>('chat');
+  const [tab, setTab] = useState<Tab>(() => tabFromPath(window.location.pathname));
   const [version, bump] = useStoreVersion();
   const [unlocked, setUnlocked] = useState(!isVaultEnabled());
+
+  // 监听浏览器前进/后退，同步 tab
+  useEffect(() => {
+    const onPopState = () => setTab(tabFromPath(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // 切换 tab 时同步 URL（替换而非 push，避免初始加载产生多余历史条目）
+  const switchTab = (next: Tab) => {
+    if (next === tab) return;
+    setTab(next);
+    const path = TABS.find((t) => t.key === next)?.path ?? '/';
+    window.history.pushState({ tab: next }, '', path);
+  };
 
   useEffect(() => {
     if (unlocked && bootstrap() > 0) bump();
@@ -65,7 +86,13 @@ export function App() {
       </main>
       <nav className="tab-bar">
         {TABS.map((t) => (
-          <button key={t.key} type="button" className={tab === t.key ? 'active' : ''} onClick={() => setTab(t.key)}>
+          <button
+            key={t.key}
+            type="button"
+            className={tab === t.key ? 'active' : ''}
+            onClick={(e) => { e.preventDefault(); switchTab(t.key); }}
+            aria-current={tab === t.key ? 'page' : undefined}
+          >
             {t.label}
           </button>
         ))}
