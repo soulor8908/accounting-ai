@@ -5,6 +5,7 @@
  * - 持久化形状与 UI 状态分离：streaming/options 等瞬态字段不入库，只存 role/text/status
  * - 标题自动生成：取首条用户消息前 20 字，避免空标题
  * - 软上限：单会话消息数无强限（AI 历史已在上层裁剪到最近 10 条），会话总数 50 上限 FIFO
+ * - 加密钩子：启用 vault 后由 LockView 注入 encryptedPersist，save 时走加密路径
  */
 import { createId } from '../utils/id';
 import { monotonicNowIso } from '../utils/now';
@@ -62,7 +63,7 @@ export class ChatMemoryStorageAdapter implements StorageAdapter {
   }
 }
 
-const STORAGE_KEY = 'accounting-ai:chats:v1';
+export const CHAT_STORAGE_KEY = 'accounting-ai:chats:v1';
 const MAX_SESSIONS = 50;
 const TITLE_MAX = 20;
 
@@ -70,6 +71,11 @@ export class ChatStore {
   private sessions: ChatSession[] = [];
   private activeId: string | null = null;
   private storage: StorageAdapter;
+  /**
+   * 加密持久化钩子：启用 vault 后由 LockView 注入。
+   * 设置后 save() 不再写 localStorage，改走加密路径；undefined 时回退 localStorage。
+   */
+  encryptedPersist?: (json: string) => Promise<void>;
 
   constructor(storage?: StorageAdapter) {
     this.storage =
@@ -204,14 +210,23 @@ export class ChatStore {
   clearAll(): void {
     this.sessions = [];
     this.activeId = null;
-    this.storage.removeItem(STORAGE_KEY);
+    this.storage.removeItem(CHAT_STORAGE_KEY);
+    // 加密路径下也清掉 vault 中的副本（由 encryptedPersist 触发空写入）
+    if (this.encryptedPersist) {
+      void this.encryptedPersist(JSON.stringify({ sessions: [], activeId: null }));
+    }
   }
 
   load(): boolean {
-    const raw = this.storage.getItem(STORAGE_KEY);
+    const raw = this.storage.getItem(CHAT_STORAGE_KEY);
     if (!raw) return false;
+    return this.loadFromJson(raw);
+  }
+
+  /** 从 JSON 字符串恢复 sessions 与 activeId（用于 vault 解锁后注入） */
+  loadFromJson(json: string): boolean {
     try {
-      const data = JSON.parse(raw) as { sessions?: ChatSession[]; activeId?: string };
+      const data = JSON.parse(json) as { sessions?: ChatSession[]; activeId?: string };
       if (!data || !Array.isArray(data.sessions)) return false;
       this.sessions = data.sessions.filter(
         (s) => s && typeof s.id === 'string' && Array.isArray(s.messages),
@@ -223,10 +238,24 @@ export class ChatStore {
     }
   }
 
+  /** 锁定时清空内存数据，但不触碰持久化（vault 中仍有加密副本） */
+  clearInMemoryData(): void {
+    this.sessions = [];
+    this.activeId = null;
+  }
+
+  /** 序列化为 JSON（供 vault 加密路径使用） */
+  serialize(): string {
+    return JSON.stringify({ sessions: this.sessions, activeId: this.activeId });
+  }
+
   save(): void {
-    this.storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ sessions: this.sessions, activeId: this.activeId }),
-    );
+    const json = this.serialize();
+    if (this.encryptedPersist) {
+      // 加密路径：交由 vault 用 masterKey 加密落盘，不写 localStorage
+      void this.encryptedPersist(json);
+      return;
+    }
+    this.storage.setItem(CHAT_STORAGE_KEY, json);
   }
 }

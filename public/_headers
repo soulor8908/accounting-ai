@@ -1,0 +1,21 @@
+# Cloudflare Pages 安全响应头
+# 参考 OWASP Secure Headers Project / CSP Level 3
+# 注意：HSTS 由 Cloudflare 边缘统一注入（避免本地 dev 误锁），此处不再叠加
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; worker-src 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Permissions-Policy: accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), camera=(), display-capture=(), document-domain=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()
+  X-DNS-Prefetch-Control: off
+
+# 静态资源缓存（Vite 构建产物带 hash，可长期缓存）
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# index.html 不缓存，确保用户拿到最新版本
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate

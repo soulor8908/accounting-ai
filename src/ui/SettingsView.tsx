@@ -55,18 +55,25 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
     }
   };
 
-  const onAISubmit = (e: FormEvent) => {
+  const onAISubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!aiConfig.apiKey.trim()) {
       setAIMessageKind('error');
       setAIMessage('请填写 API Key');
       return;
     }
-    saveAIConfig(aiConfig);
-    setAIMessageKind('success');
-    setAIMessage('AI 配置已保存');
-    resetChatHistory();
-    onChanged();
+    setAIMessageKind('info');
+    setAIMessage('正在保存...');
+    try {
+      await saveAIConfig(aiConfig);
+      setAIMessageKind('success');
+      setAIMessage('AI 配置已保存');
+      resetChatHistory();
+      onChanged();
+    } catch (err) {
+      setAIMessageKind('error');
+      setAIMessage(err instanceof Error ? err.message : '保存失败');
+    }
   };
 
   /** 测试 AI 配置：发送一个轻量请求验证连通性与鉴权 */
@@ -89,13 +96,18 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
     }
   };
 
-  const onClearAI = () => {
+  const onClearAI = async () => {
     if (!window.confirm('确定清除 AI 配置？清除后将回退到本地解析引擎，已保存的 API Key 将被删除。')) return;
-    clearAIConfig();
-    setAIConfig(defaultConfig());
-    setAIMessageKind('info');
-    setAIMessage('AI 配置已清除，将使用本地解析引擎');
-    onChanged();
+    try {
+      await clearAIConfig();
+      setAIConfig(defaultConfig());
+      setAIMessageKind('info');
+      setAIMessage('AI 配置已清除，将使用本地解析引擎');
+      onChanged();
+    } catch (err) {
+      setAIMessageKind('error');
+      setAIMessage(err instanceof Error ? err.message : '清除失败');
+    }
   };
 
   const exportData = () => {

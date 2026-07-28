@@ -3,30 +3,91 @@ import { isStrongPassword } from '../core/security/crypto';
 import {
   disableVault,
   getPlainStateJson,
+  hydrateAIConfigJson,
+  hydrateChatJson,
+  hydrateMemoryJson,
   isVaultEnabled,
   loadVaultMeta,
   lock,
+  persistChatJson,
   persistEncryptedState,
+  persistMemoryJson,
   resetPasswordByRecoveryCode,
   resetPasswordBySecurityAnswer,
   setupVault,
   unlockWithPassword,
 } from '../core/security/vault';
-import { store } from './appState';
+import { STORAGE_KEY as AI_CONFIG_STORAGE_KEY } from '../core/ai/config';
+import { CHAT_STORAGE_KEY } from '../core/store/chatStore';
+import { MEMORY_STORAGE_KEY } from '../core/store/memory';
+import { chatStore, memoryStore, store } from './appState';
 
 type Mode = 'unlock' | 'setup' | 'resetAnswer' | 'resetRecovery' | 'disable';
 
-/** 让 store 在加密启用时通过 vault 持久化 */
-function ensureEncryptedPersistHook(): void {
+/**
+ * 注入加密持久化钩子：store / chatStore / memoryStore 三路同时走 vault。
+ * 仅在 vault 已解锁时调用；锁定/关闭时由调用方移除钩子。
+ */
+function ensureEncryptedPersistHooks(): void {
   if (!store.encryptedPersist) {
     store.encryptedPersist = async (json: string) => {
       try {
         await persistEncryptedState(json);
       } catch (e) {
-        console.error('加密持久化失败', e);
+        console.error('state 加密持久化失败', e);
       }
     };
   }
+  if (!chatStore.encryptedPersist) {
+    chatStore.encryptedPersist = async (json: string) => {
+      try {
+        await persistChatJson(json);
+      } catch (e) {
+        console.error('chat 加密持久化失败', e);
+      }
+    };
+  }
+  if (!memoryStore.encryptedPersist) {
+    memoryStore.encryptedPersist = async (json: string) => {
+      try {
+        await persistMemoryJson(json);
+      } catch (e) {
+        console.error('memory 加密持久化失败', e);
+      }
+    };
+  }
+}
+
+/** 移除加密持久化钩子，回退到 localStorage */
+function clearEncryptedPersistHooks(): void {
+  store.encryptedPersist = undefined;
+  chatStore.encryptedPersist = undefined;
+  memoryStore.encryptedPersist = undefined;
+}
+
+/** 读取当前 localStorage 中的辅助明文（用于 setupVault 迁移） */
+function readLegacyAuxData(): { aiConfigJson?: string; chatJson?: string; memoryJson?: string } {
+  const aux: { aiConfigJson?: string; chatJson?: string; memoryJson?: string } = {};
+  try {
+    const ai = localStorage.getItem(AI_CONFIG_STORAGE_KEY);
+    if (ai) aux.aiConfigJson = ai;
+  } catch { /* ignore */ }
+  try {
+    const chat = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (chat) aux.chatJson = chat;
+  } catch { /* ignore */ }
+  try {
+    const mem = localStorage.getItem(MEMORY_STORAGE_KEY);
+    if (mem) aux.memoryJson = mem;
+  } catch { /* ignore */ }
+  return aux;
+}
+
+/** 清除 localStorage 中的辅助明文（迁移到 vault 后调用） */
+function clearLegacyAuxData(): void {
+  try { localStorage.removeItem(AI_CONFIG_STORAGE_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(CHAT_STORAGE_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(MEMORY_STORAGE_KEY); } catch { /* ignore */ }
 }
 
 export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
@@ -51,17 +112,34 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
 
   const meta = loadVaultMeta();
 
-  const finishUnlock = () => {
-    ensureEncryptedPersistHook();
+  /**
+   * 解锁完成后的统一收尾：
+   * 1. 注入三路加密持久化钩子
+   * 2. 加载 state 到 store
+   * 3. hydrate AI 配置 / 聊天 / 记忆 到各自 store 的内存（同时填充 vault 缓存）
+   * 4. 通知上层渲染主界面
+   */
+  const finishUnlock = async () => {
+    ensureEncryptedPersistHooks();
     const json = getPlainStateJson();
     if (json) store.loadFromJson(json);
+    // hydrate 辅助数据：失败则保持空内存（不阻塞解锁）
+    const [aiJson, chatJson, memJson] = await Promise.all([
+      hydrateAIConfigJson(),
+      hydrateChatJson(),
+      hydrateMemoryJson(),
+    ]);
+    if (chatJson) chatStore.loadFromJson(chatJson);
+    if (memJson) memoryStore.loadFromJson(memJson);
+    // AI 配置通过 getCachedAIConfigJson 被 config.loadAIConfig 同步读取，无需额外注入
+    void aiJson;
     onUnlocked();
   };
 
   const handleSetup = async () => {
     setMessage('');
     if (!isStrongPassword(pwd1)) {
-      setMessage('密码至少 6 位，需含字母和数字');
+      setMessage('密码至少 8 位，需含字母和数字');
       return;
     }
     if (pwd1 !== pwd2) {
@@ -74,15 +152,20 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
     }
     setBusy(true);
     const stateJson = store.serialize();
+    // 启用加密时把 localStorage 中的辅助明文一并迁移进 vault，原子加密
+    const aux = readLegacyAuxData();
     const r = await setupVault(
       { password: pwd1, securityQuestion: question.trim(), securityAnswer: answer.trim() },
       stateJson,
+      aux,
     );
     setBusy(false);
     if (r.ok && r.recoveryCode) {
       setRecoveryCode(r.recoveryCode);
       setMessage('加密已启用');
-      ensureEncryptedPersistHook();
+      ensureEncryptedPersistHooks();
+      // 迁移成功后清除 localStorage 中的明文辅助数据
+      clearLegacyAuxData();
     } else {
       setMessage(r.error ?? '设置失败');
     }
@@ -94,7 +177,7 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
     const r = await unlockWithPassword(pwd);
     setBusy(false);
     if (r.ok) {
-      finishUnlock();
+      await finishUnlock();
     } else {
       setMessage(r.error ?? '解锁失败');
       setPwd('');
@@ -106,7 +189,7 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
     setBusy(true);
     const r = await resetPasswordBySecurityAnswer(resetAnswerInput, newPwd);
     setBusy(false);
-    if (r.ok) finishUnlock();
+    if (r.ok) await finishUnlock();
     else setMessage(r.error ?? '重置失败');
   };
 
@@ -115,7 +198,7 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
     setBusy(true);
     const r = await resetPasswordByRecoveryCode(recoveryInput, newPwd);
     setBusy(false);
-    if (r.ok) finishUnlock();
+    if (r.ok) await finishUnlock();
     else setMessage(r.error ?? '重置失败');
   };
 
@@ -125,9 +208,21 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
     const r = await disableVault(pwd);
     setBusy(false);
     if (r.ok) {
-      store.encryptedPersist = undefined;
+      clearEncryptedPersistHooks();
       store.loadFromJson(r.stateJson!);
       store.save();
+      // 把 vault 中解密出的辅助数据写回 localStorage（明文，回退到旧版行为）
+      if (r.aiConfigJson) {
+        try { localStorage.setItem(AI_CONFIG_STORAGE_KEY, r.aiConfigJson); } catch { /* ignore */ }
+      }
+      if (r.chatJson) {
+        try { localStorage.setItem(CHAT_STORAGE_KEY, r.chatJson); } catch { /* ignore */ }
+        chatStore.loadFromJson(r.chatJson);
+      }
+      if (r.memoryJson) {
+        try { localStorage.setItem(MEMORY_STORAGE_KEY, r.memoryJson); } catch { /* ignore */ }
+        memoryStore.loadFromJson(r.memoryJson);
+      }
       onUnlocked();
     } else {
       setMessage(r.error ?? '关闭失败');
@@ -136,9 +231,11 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
 
   const handleLock = () => {
     lock();
-    store.encryptedPersist = undefined;
-    // 清空内存中的 store state
+    clearEncryptedPersistHooks();
+    // 清空内存中的 store state（含聊天/记忆/AI 配置缓存）
     store.state = JSON.parse('{"schemaVersion":2,"accounts":[],"transactions":[],"installmentPlans":[],"recurringRules":[]}');
+    chatStore.clearInMemoryData();
+    memoryStore.clearInMemoryData();
     setPwd('');
     setMode('unlock');
     setMessage('已锁定');
@@ -152,7 +249,7 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
         <div className="lock-form">
           <p className="meta">启用加密后，每次进入都需要密码。数据用 AES-GCM 256 加密存储在本地。</p>
           <label className="form-row">
-            <span>密码（≥6 位，字母+数字）</span>
+            <span>密码（≥8 位，字母+数字）</span>
             <input type="password" value={pwd1} onChange={(e) => setPwd1(e.target.value)} autoComplete="new-password" />
           </label>
           <label className="form-row">
@@ -220,7 +317,7 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
             <input type="text" value={resetAnswerInput} onChange={(e) => setResetAnswerInput(e.target.value)} autoComplete="off" />
           </label>
           <label className="form-row">
-            <span>新密码（≥6 位）</span>
+            <span>新密码（≥8 位，字母+数字）</span>
             <input type="password" value={newPwd} onChange={(e) => setNewPwd(e.target.value)} autoComplete="new-password" />
           </label>
           <div className="settings-actions">
@@ -244,7 +341,7 @@ export function LockView({ onUnlocked }: { onUnlocked: () => void }) {
             <input type="text" value={recoveryInput} onChange={(e) => setRecoveryInput(e.target.value)} placeholder="XXXX-XXXX-XXXX" autoComplete="off" />
           </label>
           <label className="form-row">
-            <span>新密码（≥6 位）</span>
+            <span>新密码（≥8 位，字母+数字）</span>
             <input type="password" value={newPwd} onChange={(e) => setNewPwd(e.target.value)} autoComplete="new-password" />
           </label>
           <div className="settings-actions">

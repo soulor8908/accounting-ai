@@ -5,6 +5,7 @@
  * - 与财务 AppState 解耦：记忆是 AI 上下文辅助数据，不参与账户余额计算，单独持久化
  * - 来源双轨：manual（用户手动添加）+ auto（聊天后启发式提取），均可被用户编辑/删除
  * - 去重：auto 记忆写入前与已有记忆做归一化相似度比较，避免重复堆积
+ * - 加密钩子：启用 vault 后由 LockView 注入 encryptedPersist，save 时走加密路径
  */
 import { createId } from '../utils/id';
 import { monotonicNowIso } from '../utils/now';
@@ -59,7 +60,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 }
 
-const STORAGE_KEY = 'accounting-ai:memories:v1';
+export const MEMORY_STORAGE_KEY = 'accounting-ai:memories:v1';
 /** auto 记忆上限：FIFO 淘汰，避免无限膨胀 */
 const MAX_AUTO_MEMORIES = 30;
 
@@ -79,6 +80,11 @@ export function isSimilar(a: string, b: string): boolean {
 export class MemoryStore {
   private memories: Memory[] = [];
   private storage: StorageAdapter;
+  /**
+   * 加密持久化钩子：启用 vault 后由 LockView 注入。
+   * 设置后 save() 不再写 localStorage，改走加密路径；undefined 时回退 localStorage。
+   */
+  encryptedPersist?: (json: string) => Promise<void>;
 
   constructor(storage?: StorageAdapter) {
     this.storage =
@@ -143,7 +149,11 @@ export class MemoryStore {
 
   clearAll(): void {
     this.memories = [];
-    this.storage.removeItem(STORAGE_KEY);
+    this.storage.removeItem(MEMORY_STORAGE_KEY);
+    // 加密路径下也清掉 vault 中的副本（由 encryptedPersist 触发空写入）
+    if (this.encryptedPersist) {
+      void this.encryptedPersist(JSON.stringify([]));
+    }
   }
 
   /** 淘汰最早的 auto 记忆，保留 manual */
@@ -160,10 +170,15 @@ export class MemoryStore {
   }
 
   load(): boolean {
-    const raw = this.storage.getItem(STORAGE_KEY);
+    const raw = this.storage.getItem(MEMORY_STORAGE_KEY);
     if (!raw) return false;
+    return this.loadFromJson(raw);
+  }
+
+  /** 从 JSON 字符串恢复 memories（用于 vault 解锁后注入） */
+  loadFromJson(json: string): boolean {
     try {
-      const arr = JSON.parse(raw) as Memory[];
+      const arr = JSON.parse(json) as Memory[];
       if (!Array.isArray(arr)) return false;
       this.memories = arr.filter((m) => m && typeof m.id === 'string' && typeof m.content === 'string');
       return true;
@@ -172,7 +187,23 @@ export class MemoryStore {
     }
   }
 
+  /** 锁定时清空内存数据，但不触碰持久化（vault 中仍有加密副本） */
+  clearInMemoryData(): void {
+    this.memories = [];
+  }
+
+  /** 序列化为 JSON（供 vault 加密路径使用） */
+  serialize(): string {
+    return JSON.stringify(this.memories);
+  }
+
   save(): void {
-    this.storage.setItem(STORAGE_KEY, JSON.stringify(this.memories));
+    const json = this.serialize();
+    if (this.encryptedPersist) {
+      // 加密路径：交由 vault 用 masterKey 加密落盘，不写 localStorage
+      void this.encryptedPersist(json);
+      return;
+    }
+    this.storage.setItem(MEMORY_STORAGE_KEY, json);
   }
 }

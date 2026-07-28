@@ -1,6 +1,6 @@
 /**
  * Web Crypto 加密工具
- * - PBKDF2 派生密钥（80000 轮 SHA-256）
+ * - PBKDF2 派生密钥（600000 轮 SHA-256，对齐 OWASP 2023 推荐）
  * - AES-GCM 256 对称加解密
  * - 安全问题答案独立哈希存储（用于重置密码）
  *
@@ -9,9 +9,14 @@
  *   此处用「安全问题 + 恢复码」替代手机号/邮箱重置流程：
  *   - 安全问题答案与密码一样经过 PBKDF2 派生，能解开主密钥包装
  *   - 恢复码作为应急后门（一次性使用，使用后失效）
+ *
+ * 迭代轮次升级说明：
+ *   旧版本为 80_000，新版本对齐 OWASP 600_000。
+ *   EncryptedBlob.iterations 字段会保留旧值，decryptString 据此恢复；
+ *   新写入的 blob 一律使用 600_000，老数据在下次 changePwd / setupVault 时自然升级。
  */
 
-const PBKDF2_ITERATIONS = 80_000;
+const PBKDF2_ITERATIONS = 600_000;
 const SALT_LEN = 16; // bytes
 const IV_LEN = 12; // AES-GCM 推荐 96-bit IV
 const KEY_LEN = 32; // 256-bit
@@ -118,9 +123,14 @@ export function generateRecoveryCode(): string {
   return `${out.slice(0, 4)}-${out.slice(4, 8)}-${out.slice(8, 12)}`;
 }
 
-/** 校验密码强度：≥6 位，含字母+数字 */
+/**
+ * 校验密码强度：≥8 位，含字母+数字
+ * - 8 位长度对齐 NIST SP 800-63B 最低建议（结合 PBKDF2 600k 轮可抵御离线爆破）
+ * - 字母+数字组合防止纯数字/纯字母弱口令
+ * - 不强制大小写混合，避免用户体验恶化（攻击面靠 PBKDF2 轮次兜底）
+ */
 export function isStrongPassword(pwd: string): boolean {
-  if (pwd.length < 6) return false;
+  if (pwd.length < 8) return false;
   const hasLetter = /[a-zA-Z]/.test(pwd);
   const hasDigit = /\d/.test(pwd);
   return hasLetter && hasDigit;
