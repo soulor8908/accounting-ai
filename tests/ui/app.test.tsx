@@ -1,8 +1,21 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../../src/App';
 import { chatStore, memoryStore, store } from '../../src/ui/appState';
+
+// 冒烟测试封闭：mock AI 客户端，chatWithAI 直接走 onError 回退到本地引擎，彻底摆脱外网依赖
+vi.mock('../../src/core/ai/client', () => ({
+  chatWithAI: vi.fn(async (
+    _userMessage: string,
+    _history: unknown[],
+    _config: unknown,
+    callbacks: { onError?: (error: string) => void },
+  ) => {
+    callbacks.onError?.('test: AI mocked, falling back to local engine');
+  }),
+  testAIConfig: vi.fn(async () => ({ ok: true, message: 'mocked' })),
+}));
 
 describe('App 冒烟', () => {
   beforeEach(() => {

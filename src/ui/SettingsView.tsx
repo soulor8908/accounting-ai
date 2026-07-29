@@ -370,6 +370,9 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
           配置后可在「对话」页用自然语言记账、查询、编辑。点击「测试连接」验证 API Key、Base URL、模型是否可用。API Key 仅存储在本地浏览器。
           {aiConfig.providerId === 'deepseek' && ' DeepSeek 默认使用 deepseek-v4-flash。'}
         </p>
+        {!isVaultEnabled() && (
+          <p className="error-text">⚠️ 当前未启用加密保险库，API Key 以明文存储在浏览器 localStorage 中，同设备其他脚本可能读取。建议启用加密保险库以加密存储密钥。</p>
+        )}
       </form>
 
       <h3>Agent 人设（{enabledAgentCount} 个可用）</h3>

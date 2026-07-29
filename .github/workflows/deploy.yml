@@ -121,10 +121,8 @@ jobs:
           fi
           echo "✓ Cloudflare secrets 已配置"
 
-      # 部署到 Cloudflare Pages
-      # 用 npx wrangler（版本与 test-and-build job 一致），不用 wrangler-action（默认旧版 3.x 会找不到项目）
-      # 目标项目：accounting-ai-tool → subdomain: accounting-ai-tool.pages.dev
-      # 旧 URL accounting-ai-caf.pages.dev 不在本账号下无法覆盖，改用新项目名获取干净的 subdomain
+      # 部署到 Cloudflare Pages（固定项目名 accounting-ai-tool，统一使用 wrangler@4）
+      # 不用 wrangler-action：其默认捆绑旧版 3.x，与本项目 wrangler@4 不兼容
       - name: "Ensure Pages project exists (accounting-ai-tool)"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -98,13 +98,16 @@ npm run coverage
 
 push 到 `main` 分支时，`.github/workflows/deploy.yml` 自动执行：
 
-1. **lint + test 门禁**：不通过则阻断部署
+1. **lint + test 门禁**：不通过则阻断部署（冒烟测试已 mock AI 客户端，无外网依赖，CI 稳定）
 2. **部署 AI 试用代理 Worker**（检测到 `AGNES_API_KEY` 时自动执行）
    - `wrangler deploy` 部署到 `https://agnes-ai-proxy.<subdomain>.workers.dev`
    - `wrangler secret put AGNES_API_KEY` 注入试用 Key
    - 从部署输出解析 Worker URL，注入 `VITE_TRIAL_PROXY_URL`
 3. **构建前端**：Worker URL 编译进产物
-4. **部署 Cloudflare Pages**：自动创建项目（幂等），部署 `dist/`
+4. **部署 Cloudflare Pages**：部署到固定项目 `accounting-ai-tool`（`wrangler@4 pages deploy`）
+   - 项目名硬编码为 `accounting-ai-tool`，subdomain 为 `accounting-ai-tool.pages.dev`
+   - 首次部署前通过 `wrangler@4 pages project create accounting-ai-tool --production-branch=main` 创建（已存在则跳过，幂等）
+   - 统一使用 `wrangler@4`（与 Worker 部署一致，不用 wrangler-action 默认旧版）
 
 #### 需配置的 GitHub Secrets
 
@@ -119,7 +122,7 @@ push 到 `main` 分支时，`.github/workflows/deploy.yml` 自动执行：
 ```
 浏览器 ──POST + X-Target-URL──▶ Worker (agnes-ai-proxy)
                                   │
-                                  ├─ 限流检查（内存 Map，30次/分钟/IP）
+                                  ├─ 限流检查（内存 Map，30次/天/IP）
                                   ├─ 白名单校验（只允许已知上游）
                                   ├─ Key 注入（从 Secret 读取，前端不可见）
                                   └─ 转发到上游 API ──▶ AI 服务

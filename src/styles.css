@@ -2781,12 +2781,11 @@ input[type="month"]:focus {
 /* 已废弃：改为全屏聊天弹框，见下方 .chat-modal-overlay */
 
 /* ---------- 首页聊天入口按钮 ---------- */
-/* 固定在 tab-bar 上方，方便单手点击 */
+/* 固定定位在 tab-bar 上方，不随中间内容滚动 */
 .chat-entry {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
   padding: 14px 18px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -2796,11 +2795,14 @@ input[type="month"]:focus {
   text-align: left;
   font-family: var(--font-body);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
-  /* 固定在底部 tab-bar 上方 */
-  position: sticky;
-  bottom: 8px;
-  flex-shrink: 0;
-  z-index: 5;
+  /* 固定在视口底部 tab-bar 上方，居中对齐 app 内容区 */
+  position: fixed;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  max-width: 688px;
+  z-index: 8;
 }
 
 .chat-entry:hover {
@@ -2828,7 +2830,7 @@ input[type="month"]:focus {
   min-height: 0;
   overflow-y: auto;
   margin: 4px 0 8px;
-  padding: 0 2px;
+  padding: 0 2px 28px;
 }
 
 .recent-header {
