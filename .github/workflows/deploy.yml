@@ -53,7 +53,7 @@ jobs:
           fi
 
           cd worker/ai-proxy
-          npm install
+          npm install --legacy-peer-deps
           # 部署 Worker
           npx wrangler deploy 2>&1 | tee deploy.log
           # 从输出中解析 Worker URL（格式：https://agnes-ai-proxy.<subdomain>.workers.dev）
