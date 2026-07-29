@@ -122,12 +122,10 @@ jobs:
           echo "✓ Cloudflare secrets 已配置"
 
       # 部署到 Cloudflare Pages
-      # 项目名 accounting-ai-caf-57q：旧项目 accounting-ai-caf 被 wrangler 自动加了后缀创建
-      # 这个项目已验证可正常工作（_headers 生效，JS 返回正确 MIME type）
-      # 如需用回 accounting-ai-caf 域名，请在 CF 控制台删除旧项目后修改此处项目名
+      # 用 npx wrangler（版本与 test-and-build job 一致），不用 wrangler-action（默认旧版 3.x 会找不到项目）
+      # 项目名 accounting-ai-caf-57q 是 wrangler 自动创建的（旧名 accounting-ai-caf 被占用）
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=accounting-ai-caf-57q --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler@4 pages deploy dist --project-name=accounting-ai-caf-57q --commit-dirty=true
