@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { type EngineResult, formatMoney } from '../core/engine/engine';
 import { getEffectiveConfig, isTrialAvailable, isUsingBuiltinConfig } from '../core/ai/config';
-import { type ChatMessage as AIMessage, chatWithAI } from '../core/ai/client';
+import type { ChatMessage as AIMessage } from '../core/ai/client';
 import { extractHabit } from '../core/ai/habits';
 import type { Account, Transaction } from '../core/types';
 import {
@@ -210,6 +210,8 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
     const history = toAIMessages(messages);
     let thinkingShown = false;
 
+    // 动态加载 AI 客户端（SSE 解析 + 工具调用），首屏不加载这部分代码
+    const { chatWithAI } = await import('../core/ai/client');
     await chatWithAI(t, history, effectiveConfig, {
         onThinking: () => {
           if (!thinkingShown) {

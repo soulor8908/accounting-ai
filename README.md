@@ -94,6 +94,47 @@ npm run coverage
 
 构建产物 `dist/` 可直接部署到任意静态托管。Cloudflare Pages 已通过 `public/_headers` 与 `public/_redirects` 配置安全头与 SPA 路由 fallback。
 
+### CI/CD 自动部署
+
+push 到 `main` 分支时，`.github/workflows/deploy.yml` 自动执行：
+
+1. **lint + test 门禁**：不通过则阻断部署
+2. **部署 AI 试用代理 Worker**（检测到 `AGNES_API_KEY` 时自动执行）
+   - `wrangler deploy` 部署到 `https://agnes-ai-proxy.<subdomain>.workers.dev`
+   - `wrangler secret put AGNES_API_KEY` 注入试用 Key
+   - 从部署输出解析 Worker URL，注入 `VITE_TRIAL_PROXY_URL`
+3. **构建前端**：Worker URL 编译进产物
+4. **部署 Cloudflare Pages**：自动创建项目（幂等），部署 `dist/`
+
+#### 需配置的 GitHub Secrets
+
+| Secret | 说明 |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | CF Token（需 Workers + Pages 权限） |
+| `CLOUDFLARE_ACCOUNT_ID` | CF Account ID（控制台右下角） |
+| `AGNES_API_KEY` | 试用 AI API Key（不配置则跳过 Worker，用户需自带 Key） |
+
+## AI 试用代理架构
+
+```
+浏览器 ──POST + X-Target-URL──▶ Worker (agnes-ai-proxy)
+                                  │
+                                  ├─ 限流检查（内存 Map，30次/分钟/IP）
+                                  ├─ 白名单校验（只允许已知上游）
+                                  ├─ Key 注入（从 Secret 读取，前端不可见）
+                                  └─ 转发到上游 API ──▶ AI 服务
+```
+
+- **前端**：`apiKey` 为空字符串，仅持有 `proxyUrl`（Worker URL）
+- **Worker**：从 `AGNES_API_KEY` Secret 注入 Key，按 IP 限流，转发请求
+- **用户自有 Key**：前端直连 API（不经过 Worker），`X-API-Key` header 携带用户 Key
+
+## 安全历史
+
+- 2026-07-29：发现历史 commit `ad82942` 中硬编码试用 API Key，已通过 `git filter-repo` 重写历史，
+  Key 明文已从所有 commit 中擦除。上游 Key 已撤销轮换。
+  重写后 commit hash 变更：`ad82942 → bfc1b22`、`b90957e → 6421f30`。
+
 ## 许可
 
 私有项目，未发布开源许可。

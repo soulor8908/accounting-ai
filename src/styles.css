@@ -39,8 +39,8 @@
   --shadow-lg: 0 2px 4px rgba(46, 38, 20, 0.07), 0 14px 38px rgba(46, 38, 20, 0.14);
 
   /* 字体 */
-  --font-body: 'Noto Sans SC', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-display: 'Noto Serif SC', 'Songti SC', serif;
+  --font-body: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --font-display: 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
 
   --radius: 16px;
   --radius-sm: 10px;
