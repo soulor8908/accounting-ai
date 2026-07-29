@@ -12,7 +12,7 @@
   /* 墨色 */
   --ink: #1e2a25;
   --ink-soft: #46544d;
-  --muted: #8f8878;
+  --muted: #6e6859;
 
   /* 主色：深松绿 */
   --pine: #17604d;
@@ -165,6 +165,22 @@ main {
        导致聊天沉浸式模式（position: fixed; inset:0）只能填满 main 而非视口，被 header/tab-bar 遮挡 */
     transform: none;
   }
+}
+
+/* 懒加载视图的轻量占位 */
+.view-loading {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  background: radial-gradient(circle at center, var(--border-soft) 0%, transparent 70%);
+  animation: sk-pulse 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes sk-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
 }
 
 /* ---------- 面板 ---------- */

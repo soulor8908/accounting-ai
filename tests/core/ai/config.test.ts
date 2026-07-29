@@ -136,9 +136,10 @@ describe('内置试用配置 (BUILTIN_AI_CONFIG)', () => {
     localStorage.clear();
   });
 
-  it('BUILTIN_AI_CONFIG 包含 agnes 配置', () => {
+  it('BUILTIN_AI_CONFIG 包含 agnes 配置且不含明文 apiKey', () => {
     expect(BUILTIN_AI_CONFIG.providerId).toBe('agnes');
-    expect(BUILTIN_AI_CONFIG.apiKey).toBeTruthy();
+    // P0 安全修复：apiKey 不再硬编码在前端
+    expect(BUILTIN_AI_CONFIG.apiKey).toBe('');
     expect(BUILTIN_AI_CONFIG.baseUrl).toBe('https://apihub.agnes-ai.com');
     expect(BUILTIN_AI_CONFIG.model).toBe('agnes-2.0-flash');
   });
@@ -181,10 +182,10 @@ describe('getEffectiveConfig', () => {
     localStorage.clear();
   });
 
-  it('未配置时返回内置试用配置', () => {
+  it('未配置时返回内置试用配置（apiKey 为空，走 Worker 代理）', () => {
     const cfg = getEffectiveConfig();
     expect(cfg.providerId).toBe('agnes');
-    expect(cfg.apiKey).toBe(BUILTIN_AI_CONFIG.apiKey);
+    expect(cfg.apiKey).toBe('');
     expect(cfg.model).toBe('agnes-2.0-flash');
   });
 
@@ -203,7 +204,7 @@ describe('getEffectiveConfig', () => {
     expect(cfg.providerId).toBe('deepseek');
   });
 
-  it('用户配置了空 apiKey 时回退到内置试用配置', () => {
+  it('用户配置了空 apiKey 且无 proxyUrl 时回退到内置试用配置', () => {
     saveAIConfig({
       providerId: 'deepseek',
       apiKey: '',
@@ -213,7 +214,21 @@ describe('getEffectiveConfig', () => {
 
     const cfg = getEffectiveConfig();
     expect(cfg.providerId).toBe('agnes');
-    expect(cfg.apiKey).toBe(BUILTIN_AI_CONFIG.apiKey);
+    expect(cfg.apiKey).toBe('');
+  });
+
+  it('用户配置了 proxyUrl 但 apiKey 为空时使用用户配置（自定义代理）', () => {
+    saveAIConfig({
+      providerId: 'custom',
+      apiKey: '',
+      baseUrl: 'https://example.com',
+      model: 'm',
+      proxyUrl: 'https://my-proxy.example.com',
+    });
+
+    const cfg = getEffectiveConfig();
+    expect(cfg.providerId).toBe('custom');
+    expect(cfg.proxyUrl).toBe('https://my-proxy.example.com');
   });
 
   it('baseUrl 不含 /v1 后缀（client.ts 会拼接 /v1/chat/completions）', () => {

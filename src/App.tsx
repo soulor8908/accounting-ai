@@ -1,16 +1,18 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { bootstrap } from './ui/appState';
-import { AccountsView } from './ui/AccountsView';
-import { CalendarView } from './ui/CalendarView';
 import { ChatView } from './ui/ChatView';
 import { DialogContainer } from './ui/Dialog';
 import { Icon, type IconName } from './ui/Icon';
 import { LockView } from './ui/LockView';
-import { SettingsView } from './ui/SettingsView';
-import { StatsView } from './ui/StatsView';
-import { TxListView } from './ui/TxListView';
 import { useStoreVersion } from './ui/useStoreVersion';
 import { isVaultEnabled } from './core/security/vault';
+
+// 非首屏视图懒加载：减小首屏 JS 体积，加速 LCP
+const AccountsView = lazy(() => import('./ui/AccountsView').then((m) => ({ default: m.AccountsView })));
+const CalendarView = lazy(() => import('./ui/CalendarView').then((m) => ({ default: m.CalendarView })));
+const TxListView = lazy(() => import('./ui/TxListView').then((m) => ({ default: m.TxListView })));
+const StatsView = lazy(() => import('./ui/StatsView').then((m) => ({ default: m.StatsView })));
+const SettingsView = lazy(() => import('./ui/SettingsView').then((m) => ({ default: m.SettingsView })));
 
 type Tab = 'chat' | 'accounts' | 'calendar' | 'txs' | 'stats' | 'settings';
 
@@ -80,12 +82,14 @@ export function App() {
         </div>
       </header>
       <main>
-        {tab === 'chat' && <ChatView onChanged={bump} />}
-        {tab === 'accounts' && <AccountsView onChanged={bump} />}
-        {tab === 'calendar' && <CalendarView version={version} />}
-        {tab === 'txs' && <TxListView onChanged={bump} />}
-        {tab === 'stats' && <StatsView />}
-        {tab === 'settings' && <SettingsView onChanged={bump} onLock={() => setUnlocked(false)} />}
+        <Suspense fallback={<div className="view-loading" aria-busy="true" />}>
+          {tab === 'chat' && <ChatView onChanged={bump} />}
+          {tab === 'accounts' && <AccountsView onChanged={bump} />}
+          {tab === 'calendar' && <CalendarView version={version} />}
+          {tab === 'txs' && <TxListView onChanged={bump} />}
+          {tab === 'stats' && <StatsView />}
+          {tab === 'settings' && <SettingsView onChanged={bump} onLock={() => setUnlocked(false)} />}
+        </Suspense>
       </main>
       <nav className="tab-bar">
         {TABS.map((t) => (

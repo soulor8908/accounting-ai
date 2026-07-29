@@ -414,7 +414,7 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
           type="button"
           className="overview-cell"
           onClick={() => setDetailView('assets')}
-          aria-label="查看资产明细"
+          aria-label={`总资产 ¥${formatMoney(totalAssets)}，查看明细`}
         >
           <span className="overview-label">总资产</span>
           <span className="overview-value">¥{formatMoney(totalAssets)}</span>
@@ -423,7 +423,7 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
           type="button"
           className="overview-cell"
           onClick={() => setDetailView('liabilities')}
-          aria-label="查看负债明细"
+          aria-label={`总负债 ¥${formatMoney(totalLiabilities)}，查看明细`}
         >
           <span className="overview-label">总负债</span>
           <span className="overview-value negative">¥{formatMoney(totalLiabilities)}</span>
@@ -466,7 +466,6 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
         type="button"
         className="chat-entry"
         onClick={() => setChatOpen(true)}
-        aria-label="开始聊天"
       >
         <Icon name="chat" size={18} className="chat-entry-icon" />
         <span className="chat-entry-placeholder">{inputPlaceholder}</span>

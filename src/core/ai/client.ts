@@ -128,16 +128,20 @@ function buildFetchParams(config: AIConfig, body: unknown, signal: AbortSignal):
   const bodyStr = JSON.stringify(body);
 
   if (proxyUrl) {
-    // 走 Worker 代理：自定义 header 转发目标 URL 与 API Key
+    // 走 Worker 代理：自定义 header 转发目标 URL
+    // apiKey 为空时（试用模式）不传 X-API-Key，由 Worker 用自己的 Secret 注入
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Target-URL': targetUrl,
+    };
+    if (config.apiKey.trim()) {
+      headers['X-API-Key'] = config.apiKey;
+    }
     return {
       url: proxyUrl,
       init: {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Target-URL': targetUrl,
-          'X-API-Key': config.apiKey,
-        },
+        headers,
         body: bodyStr,
         signal,
       },
@@ -310,7 +314,8 @@ async function parseSSEStream(
 export async function testAIConfig(
   config: AIConfig,
 ): Promise<{ ok: boolean; message: string }> {
-  if (!config.apiKey.trim()) {
+  // 试用模式（proxyUrl 有值但 apiKey 为空）：Worker 注入 Key，允许测试
+  if (!config.apiKey.trim() && !config.proxyUrl?.trim()) {
     return { ok: false, message: '请先填写 API Key' };
   }
   if (!config.model.trim()) {

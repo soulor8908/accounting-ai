@@ -249,6 +249,19 @@ describe('chatWithAI - 直连模式', () => {
     expect(headers['X-API-Key']).toBe('sk-proxy-456');
     expect(headers['X-Target-URL']).toBe('https://api.deepseek.com/v1/chat/completions');
   });
+
+  it('试用模式（空 apiKey + proxyUrl）不发送 X-API-Key', async () => {
+    const cfg: AIConfig = { ...CONFIG, proxyUrl: 'https://proxy.example.com', apiKey: '' };
+    const fetchMock = vi.fn().mockResolvedValue(
+      sseResponse([JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await chatWithAI('hi', [], cfg, makeCallbacks());
+    expect(fetchMock.mock.calls[0][0]).toBe('https://proxy.example.com');
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers['X-API-Key']).toBeUndefined();
+    expect(headers['X-Target-URL']).toBe('https://api.deepseek.com/v1/chat/completions');
+  });
 });
 
 describe('testAIConfig', () => {
@@ -256,10 +269,22 @@ describe('testAIConfig', () => {
     vi.restoreAllMocks();
   });
 
-  it('缺少 API Key 时直接返回失败', async () => {
-    const r = await testAIConfig({ ...CONFIG, apiKey: '' });
+  it('缺少 API Key 且无代理时直接返回失败', async () => {
+    const r = await testAIConfig({ ...CONFIG, apiKey: '', proxyUrl: undefined });
     expect(r.ok).toBe(false);
     expect(r.message).toContain('API Key');
+  });
+
+  it('试用模式（空 apiKey + proxyUrl）允许发请求', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: { content: '成功' } }] })),
+    );
+    const r = await testAIConfig({ ...CONFIG, apiKey: '' });
+    expect(r.ok).toBe(true);
+    // 不应发送 X-API-Key（Worker 用自己的 Secret）
+    const headers = (vi.mocked(fetch).mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers['X-API-Key']).toBeUndefined();
   });
 
   it('缺少 model 时返回失败', async () => {

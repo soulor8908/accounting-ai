@@ -2,6 +2,8 @@
  * AI Provider 配置：支持 DeepSeek、MiMo 及自定义 OpenAI 兼容 API
  *
  * 安全设计（P0 修复）：
+ * - 试用 Key 不再硬编码在前端，改为通过 Cloudflare Worker 代理 + 限流。
+ *   Worker 持有 Key（Secret），前端只持有 Worker URL（构建时注入 VITE_TRIAL_PROXY_URL）。
  * - 启用 vault 后，含 apiKey 的配置 JSON 由 vault 用 masterKey 加密落盘，
  *   不再以明文存于 localStorage；解锁后通过 hydrateAIConfigJson 填充内存缓存。
  * - 未启用 vault 时仍走 localStorage（兼容旧版），但在 SettingsView 显式提示风险。
@@ -60,32 +62,44 @@ export const AI_PROVIDERS: AIProviderPreset[] = [
 /**
  * 内置试用 AI 配置：未绑定自定义 key 时默认使用。
  *
- * 安全说明：key 硬编码在前端，理论上可被抓包/查看源码获取。
- * 这是「试用免配置」体验的已知折中，生产环境应改为通过后端代理。
+ * 安全说明（P0 修复）：
+ * - API Key 不再硬编码在前端，而是存于 Cloudflare Worker Secret。
+ * - 前端通过 proxyUrl 指向 Worker（构建时注入 VITE_TRIAL_PROXY_URL）。
+ * - Worker 负责：注入 Key、按 IP 限流（30 次/分钟）、转发到上游 API。
+ * - 若 VITE_TRIAL_PROXY_URL 未配置，试用不可用，用户需自行绑定 Key。
  *
  * 切换默认模型：只需修改此常量的 model 字段。
  */
+const TRIAL_PROXY_URL = import.meta.env.VITE_TRIAL_PROXY_URL ?? '';
+
 export const BUILTIN_AI_CONFIG: AIConfig = {
   providerId: 'agnes',
-  apiKey: 'REDACTED_API_KEY',
+  apiKey: '',
   baseUrl: 'https://apihub.agnes-ai.com',
   model: 'agnes-2.0-flash',
+  proxyUrl: TRIAL_PROXY_URL || undefined,
 };
 
 /**
- * 获取生效的 AI 配置：优先用户自定义配置（有 apiKey），否则回退内置试用配置。
- * 试用用户无需绑定 key 即可直接使用 AI 记账。
+ * 获取生效的 AI 配置：
+ * - 优先用户自定义配置（有 apiKey 或有 proxyUrl）
+ * - 否则回退内置试用配置（通过 Worker 代理，无需用户 key）
  */
 export function getEffectiveConfig(): AIConfig {
   const user = loadAIConfig();
-  if (user && user.apiKey.trim()) return user;
+  if (user && (user.apiKey.trim() || user.proxyUrl)) return user;
   return BUILTIN_AI_CONFIG;
 }
 
 /** 判断当前是否使用内置试用配置（非用户自定义） */
 export function isUsingBuiltinConfig(): boolean {
   const user = loadAIConfig();
-  return !user || !user.apiKey.trim();
+  return !user || (!user.apiKey.trim() && !user.proxyUrl);
+}
+
+/** 试用代理是否可用（Worker URL 已配置） */
+export function isTrialAvailable(): boolean {
+  return !!TRIAL_PROXY_URL;
 }
 
 export interface AIConfig {

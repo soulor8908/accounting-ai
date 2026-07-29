@@ -449,3 +449,13 @@ export async function disableVault(password: string): Promise<DisableVaultResult
 export function getSecurityQuestion(): string | null {
   return loadVaultMeta()?.securityQuestion ?? null;
 }
+
+/** @internal 测试专用：重置 vault 内部单例状态 */
+export function _resetForTesting(): void {
+  internal.meta = null;
+  internal.masterKeyB64 = null;
+  internal.plainStateJson = null;
+  internal.plainAIConfigJson = null;
+  internal.plainChatJson = null;
+  internal.plainMemoryJson = null;
+}

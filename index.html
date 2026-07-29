@@ -7,13 +7,77 @@
     <meta name="theme-color" content="#f6f2ea" />
     <title>智能记账AI助手</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <!--
+      关键 CSS 内联：首屏骨架屏所需的最小样式，避免等待 JS bundle 下载+解析后才渲染。
+      完整样式由 main.tsx 通过 import './styles.css' 注入，React render 后替换骨架。
+    -->
+    <style>
+      :root {
+        --paper: #f6f2ea; --card: #fffdf7; --card-warm: #faf6ec;
+        --ink: #1e2a25; --ink-soft: #46544d; --muted: #6e6859;
+        --pine: #17604d; --pine-deep: #0e4537; --pine-tint: #e3efe8;
+        --border: #e7e0cf; --border-soft: #efe9da;
+        --shadow-md: 0 1px 2px rgba(46,38,20,.06), 0 6px 20px rgba(46,38,20,.09);
+        --shadow-lg: 0 2px 4px rgba(46,38,20,.07), 0 14px 38px rgba(46,38,20,.14);
+        --font-body: 'Noto Sans SC', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        --font-display: 'Noto Serif SC', 'Songti SC', serif;
+        --radius: 16px; --radius-sm: 10px;
+      }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0; font-family: var(--font-body); color: var(--ink);
+        background: var(--paper);
+        -webkit-font-smoothing: antialiased;
+      }
+      body::before {
+        content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .5;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+      }
+      #root { position: relative; z-index: 1; }
+
+      /* 骨架屏 */
+      .app-skeleton { max-width: 720px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+      .sk-header { padding: 28px 20px 6px; display: flex; align-items: baseline; gap: 12px; }
+      .sk-header h1 { margin: 0; font-family: var(--font-display); font-size: 24px; font-weight: 700; letter-spacing: .06em; display: flex; align-items: center; gap: 10px; }
+      .sk-header h1::before { content: '账'; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; font-size: 17px; font-family: var(--font-display); color: #f8f4e9; background: linear-gradient(145deg, #c94f32, #a83c22); border-radius: 9px; box-shadow: 0 3px 10px rgba(201,79,50,.35), inset 0 1px 0 rgba(255,255,255,.25); transform: rotate(-4deg); }
+      .sk-header .sk-sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); letter-spacing: .14em; }
+      .sk-main { flex: 1; padding: 14px 16px 108px; }
+      .sk-overview { display: flex; background: linear-gradient(160deg, var(--pine) 0%, var(--pine-deep) 100%); border-radius: var(--radius); padding: 20px 22px; box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,.14); gap: 20px; }
+      .sk-overview > div { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+      .sk-overview > div + div { padding-left: 20px; border-left: 1px solid rgba(255,255,255,.16); }
+      .sk-overview > div:first-child { padding-right: 20px; }
+      .sk-bar { height: 12px; border-radius: 6px; background: rgba(255,255,255,.15); }
+      .sk-bar.wide { height: 20px; }
+      .sk-bar.small { height: 10px; width: 60%; }
+      .sk-shimmer { animation: sk-pulse 1.5s ease-in-out infinite; }
+      @keyframes sk-pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+      .sk-section { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+      .sk-row { display: flex; justify-content: space-between; align-items: center; padding: 13px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--card-warm); }
+      .sk-entry { margin-top: auto; padding: 14px 18px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); box-shadow: var(--shadow-md); display: flex; align-items: center; gap: 10px; }
+      .sk-entry .sk-bar { flex: 1; }
+      .sk-tabbar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); width: calc(100% - 32px); max-width: 640px; display: flex; gap: 2px; padding: 6px; background: rgba(255,253,247,.86); backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow-lg); z-index: 10; }
+      .sk-tabbar > div { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 0; }
+      .sk-tabbar .sk-bar { width: 32px; height: 18px; }
+      .sk-tabbar .sk-bar.small { width: 28px; height: 10px; }
+      @media (prefers-reduced-motion: reduce) { .sk-shimmer { animation: none; } }
+    </style>
+
     <!--
       字体异步加载：用 preload + onload 切换为 stylesheet，避免阻塞首屏渲染。
       display=swap 让文本先用系统字体渲染，字体就绪后再交换，FCP/LCP 不再被字体请求拖住。
-      noscript 兜底：JS 禁用时仍同步加载样式。
+      骨架屏使用系统字体即可渲染，不依赖网络字体。
     -->
+    <link
+      rel="preconnect"
+      href="https://fonts.googleapis.com"
+    />
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
     <link
       rel="preload"
       as="style"
@@ -28,7 +92,44 @@
     </noscript>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- 首屏骨架屏：React render 前由浏览器直接渲染，消除白屏等待 -->
+      <div class="app-skeleton">
+        <div class="sk-header">
+          <h1>智能记账</h1>
+          <p class="sk-sub">AI LEDGER</p>
+        </div>
+        <div class="sk-main">
+          <div class="sk-overview">
+            <div>
+              <div class="sk-bar small sk-shimmer"></div>
+              <div class="sk-bar wide sk-shimmer"></div>
+            </div>
+            <div>
+              <div class="sk-bar small sk-shimmer"></div>
+              <div class="sk-bar wide sk-shimmer"></div>
+            </div>
+          </div>
+          <div class="sk-section">
+            <div class="sk-row"><div class="sk-bar sk-shimmer" style="width:40%"></div><div class="sk-bar sk-shimmer" style="width:20%"></div></div>
+            <div class="sk-row"><div class="sk-bar sk-shimmer" style="width:35%"></div><div class="sk-bar sk-shimmer" style="width:18%"></div></div>
+            <div class="sk-row"><div class="sk-bar sk-shimmer" style="width:45%"></div><div class="sk-bar sk-shimmer" style="width:22%"></div></div>
+          </div>
+          <div class="sk-entry">
+            <div class="sk-bar sk-shimmer" style="width:18px;height:18px;border-radius:50%"></div>
+            <div class="sk-bar sk-shimmer"></div>
+          </div>
+        </div>
+        <div class="sk-tabbar">
+          <div><div class="sk-bar sk-shimmer"></div><div class="sk-bar small sk-shimmer"></div></div>
+          <div><div class="sk-bar sk-shimmer"></div><div class="sk-bar small sk-shimmer"></div></div>
+          <div><div class="sk-bar sk-shimmer"></div><div class="sk-bar small sk-shimmer"></div></div>
+          <div><div class="sk-bar sk-shimmer"></div><div class="sk-bar small sk-shimmer"></div></div>
+          <div><div class="sk-bar sk-shimmer"></div><div class="sk-bar small sk-shimmer"></div></div>
+          <div><div class="sk-bar sk-shimmer"></div><div class="sk-bar small sk-shimmer"></div></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -24,16 +24,16 @@ describe('App 冒烟', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    // 添加账户
+    // 添加账户（懒加载 chunk 需 await）
     await user.click(screen.getByRole('button', { name: '账户' }));
-    await user.type(screen.getByLabelText('账户名'), '微信零钱');
+    await user.type(await screen.findByLabelText('账户名'), '微信零钱');
     await user.type(screen.getByLabelText('初始余额'), '1000');
     await user.click(screen.getByRole('button', { name: '添加' }));
     expect(screen.getByText('微信零钱')).toBeInTheDocument();
 
     // 对话记账（聊天现为全屏弹框，需先点击入口按钮打开）
     await user.click(screen.getByRole('button', { name: '对话' }));
-    await user.click(screen.getByRole('button', { name: '开始聊天' }));
+    await user.click(screen.getByRole('button', { name: /输入消息.*记账/ }));
     await user.type(screen.getByLabelText('记账输入'), '吃面25');
     await user.click(screen.getByRole('button', { name: '发送' }));
     expect(await screen.findByText(/已记支出/)).toBeInTheDocument();
@@ -42,14 +42,14 @@ describe('App 冒烟', () => {
     // 流水页可见（先关闭聊天弹框，再切换到流水 tab）
     await user.click(screen.getByRole('button', { name: '关闭聊天' }));
     await user.click(screen.getByRole('button', { name: '流水' }));
-    expect(screen.getByText('-¥25.00')).toBeInTheDocument();
+    expect(await screen.findByText('-¥25.00')).toBeInTheDocument();
   });
 
   it('数据持久化：store.save 后可重新 load', async () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole('button', { name: '账户' }));
-    await user.type(screen.getByLabelText('账户名'), '现金');
+    await user.type(await screen.findByLabelText('账户名'), '现金');
     await user.click(screen.getByRole('button', { name: '添加' }));
 
     const { Store } = await import('../../src/core/store/store');
