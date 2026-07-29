@@ -122,12 +122,13 @@ jobs:
           echo "✓ Cloudflare secrets 已配置"
 
       # 创建 Pages 项目（已存在则跳过）
+      # 使用 accounting-ai-caf 项目名，对应用户访问的 https://accounting-ai-caf.pages.dev
       - name: Create Pages project if not exists
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npx wrangler pages project create modern-ledger --production-branch=main 2>&1 || {
+          npx wrangler pages project create accounting-ai-caf --production-branch=main 2>&1 || {
             echo "::notice::Pages 项目可能已存在，继续部署..."
           }
 
@@ -136,4 +137,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=modern-ledger --commit-dirty=true
+          command: pages deploy dist --project-name=accounting-ai-caf --commit-dirty=true

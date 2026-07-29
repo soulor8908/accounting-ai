@@ -2,6 +2,12 @@
 # 参考 OWASP Secure Headers Project / CSP Level 3
 # 注意：HSTS 由 Cloudflare 边缘统一注入（避免本地 dev 误锁），此处不再叠加
 
+# Cloudflare Pages _headers 语法：
+# - 路径用 /* 后缀匹配子路径（/assets/* 匹配 /assets/a/b/c.js）
+# - /*  匹配所有路径
+# - 同一路径的多条规则会合并
+# - 更具体的路径规则优先于 /*
+
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; worker-src 'self'
   X-Frame-Options: DENY
@@ -12,19 +18,18 @@
   Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()
   X-DNS-Prefetch-Control: off
 
-# 显式声明 JS/CSS MIME type，防止 Cloudflare Pages 返回 application/octet-stream
-# 配合 nosniff 头，浏览器严格按声明的类型解析 ES 模块
-/*.js
+# Vite 构建产物在 /assets/ 下，带 hash 文件名，可长期缓存
+# 显式声明 Content-Type，防止 Cloudflare Pages 返回 text/html 导致 ES 模块加载失败
+/assets/*.js
   Content-Type: text/javascript; charset=utf-8
+  Cache-Control: public, max-age=31536000, immutable
 
-/*.mjs
+/assets/*.mjs
   Content-Type: text/javascript; charset=utf-8
+  Cache-Control: public, max-age=31536000, immutable
 
-/*.css
+/assets/*.css
   Content-Type: text/css; charset=utf-8
-
-# 静态资源缓存（Vite 构建产物带 hash，可长期缓存）
-/assets/*
   Cache-Control: public, max-age=31536000, immutable
 
 # index.html 不缓存，确保用户拿到最新版本
