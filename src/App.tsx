@@ -56,6 +56,15 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unlocked]);
 
+  /** 跳转到设置页并滚动到 AI 配置区（供 ChatView 试用提示横幅调用） */
+  const navigateToSettingsAIConfig = () => {
+    switchTab('settings');
+    // SettingsView 懒加载，延迟等待渲染后滚动
+    setTimeout(() => {
+      document.getElementById('ai-config-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 350);
+  };
+
   if (!unlocked) {
     return (
       <div className="app">
@@ -83,7 +92,7 @@ export function App() {
       </header>
       <main>
         <Suspense fallback={<div className="view-loading" aria-busy="true" />}>
-          {tab === 'chat' && <ChatView onChanged={bump} />}
+          {tab === 'chat' && <ChatView onChanged={bump} onNavigateToSettings={navigateToSettingsAIConfig} />}
           {tab === 'accounts' && <AccountsView onChanged={bump} />}
           {tab === 'calendar' && <CalendarView version={version} />}
           {tab === 'txs' && <TxListView onChanged={bump} />}

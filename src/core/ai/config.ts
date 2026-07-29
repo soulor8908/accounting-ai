@@ -65,7 +65,7 @@ export const AI_PROVIDERS: AIProviderPreset[] = [
  * 安全说明（P0 修复）：
  * - API Key 不再硬编码在前端，而是存于 Cloudflare Worker Secret。
  * - 前端通过 proxyUrl 指向 Worker（构建时注入 VITE_TRIAL_PROXY_URL）。
- * - Worker 负责：注入 Key、按 IP 限流（30 次/天）、转发到上游 API。
+ * - Worker 负责：注入 Key、按 IP 限流（30 次/分钟）、转发到上游 API。
  * - 若 VITE_TRIAL_PROXY_URL 未配置，试用不可用，用户需自行绑定 Key。
  *
  * 切换默认模型：只需修改此常量的 model 字段。

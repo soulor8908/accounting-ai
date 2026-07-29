@@ -301,7 +301,7 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
     <div className="panel">
       <h2>设置</h2>
 
-      <h3>AI 助手配置</h3>
+      <h3 id="ai-config-section">AI 助手配置</h3>
       <form className="ai-config-form" onSubmit={onAISubmit}>
         <label className="form-row">
           <span>AI 服务商</span>

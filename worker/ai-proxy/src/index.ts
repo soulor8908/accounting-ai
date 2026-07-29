@@ -4,7 +4,7 @@
  * 职责：
  * 1. 持有试用 API Key（存为 Worker Secret `AGNES_API_KEY`），前端不再暴露
  * 2. 代理转发请求到上游 OpenAI 兼容 API（支持 SSE 流式）
- * 3. 按 IP 限流（内存固定窗口：30 次/天），防止试用额度被刷
+ * 3. 按 IP 限流（内存固定窗口：30 次/分钟），防止试用额度被刷
  *
  * 限流方案选型：
  * - 内存 Map（本实现）：零配置，部署即用。每个 isolate 独立计数，
@@ -18,10 +18,10 @@
  * 前端通过 VITE_TRIAL_PROXY_URL 环境变量指向此 Worker。
  */
 
-/** 限流：每 IP 每天最大请求数 */
-const RATE_LIMIT_PER_DAY = 30;
-/** 窗口大小（毫秒）：24 小时 */
-const WINDOW_MS = 24 * 60 * 60 * 1000;
+/** 限流：每 IP 每分钟最大请求数 */
+const RATE_LIMIT_PER_MIN = 30;
+/** 窗口大小（毫秒） */
+const WINDOW_MS = 60_000;
 
 /** 允许转发的前缀白名单，防止被当开放代理用 */
 const ALLOWED_TARGET_PREFIXES = [
@@ -51,7 +51,7 @@ function checkRateLimit(ip: string): { exceeded: boolean; count: number } {
 
   const entry = rateMap.get(ip);
   if (entry && entry.expiresAt > now) {
-    if (entry.count >= RATE_LIMIT_PER_DAY) {
+    if (entry.count >= RATE_LIMIT_PER_MIN) {
       return { exceeded: true, count: entry.count };
     }
     entry.count++;
@@ -80,9 +80,9 @@ export default {
     const rateResult = checkRateLimit(clientIP);
     if (rateResult.exceeded) {
       return json(
-        { error: { message: `今日试用次数已用完（每天限 ${RATE_LIMIT_PER_DAY} 次），请明天再试或自行配置 API Key` } },
+        { error: { message: `请求过于频繁，每分钟限 ${RATE_LIMIT_PER_MIN} 次，请稍后再试` } },
         429,
-        { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Limit': String(RATE_LIMIT_PER_DAY) },
+        { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Limit': String(RATE_LIMIT_PER_MIN) },
       );
     }
 
@@ -120,8 +120,8 @@ export default {
     const ct = upstream.headers.get('content-type');
     if (ct) respHeaders.set('Content-Type', ct);
     // 限流信息回传，方便前端展示
-    respHeaders.set('X-RateLimit-Limit', String(RATE_LIMIT_PER_DAY));
-    respHeaders.set('X-RateLimit-Remaining', String(Math.max(0, RATE_LIMIT_PER_DAY - rateResult.count)));
+    respHeaders.set('X-RateLimit-Limit', String(RATE_LIMIT_PER_MIN));
+    respHeaders.set('X-RateLimit-Remaining', String(Math.max(0, RATE_LIMIT_PER_MIN - rateResult.count)));
     respHeaders.set('Access-Control-Allow-Origin', '*');
 
     return new Response(upstream.body, {

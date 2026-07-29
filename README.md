@@ -122,7 +122,7 @@ push 到 `main` 分支时，`.github/workflows/deploy.yml` 自动执行：
 ```
 浏览器 ──POST + X-Target-URL──▶ Worker (agnes-ai-proxy)
                                   │
-                                  ├─ 限流检查（内存 Map，30次/天/IP）
+                                  ├─ 限流检查（内存 Map，30次/分钟/IP）
                                   ├─ 白名单校验（只允许已知上游）
                                   ├─ Key 注入（从 Secret 读取，前端不可见）
                                   └─ 转发到上游 API ──▶ AI 服务

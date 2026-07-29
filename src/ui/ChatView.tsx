@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { type EngineResult, formatMoney } from '../core/engine/engine';
 import { getEffectiveConfig, isTrialAvailable, isUsingBuiltinConfig } from '../core/ai/config';
+import { DAILY_TRIAL_LIMIT, getTrialRemaining, hasTrialQuota, recordTrialUsage } from '../core/ai/trialQuota';
 import type { ChatMessage as AIMessage } from '../core/ai/client';
 import { extractHabit } from '../core/ai/habits';
 import type { Account, Transaction } from '../core/types';
@@ -72,7 +73,7 @@ export function resetChatHistory(): void {
   chatStore.create();
 }
 
-export function ChatView({ onChanged }: { onChanged: () => void }) {
+export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () => void; onNavigateToSettings?: () => void }) {
   // 启动时确保有 active 会话
   const initialSession = chatStore.getActive() ?? chatStore.create();
   const [activeSessionId, setActiveSessionId] = useState<string>(initialSession.id);
@@ -89,6 +90,9 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
   const [agentsOpen, setAgentsOpen] = useState(false);
   // 聊天弹框：点击首页输入框入口后打开全屏聊天弹框
   const [chatOpen, setChatOpen] = useState(false);
+  // 试用配额版本号：每次调用后递增，触发剩余次数重新渲染
+  const [quotaVersion, setQuotaVersion] = useState(0);
+  void quotaVersion;
   const agents = listAgents();
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -197,6 +201,12 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
     const t = text.trim();
     if (!t || loading) return;
 
+    // 试用用户每日配额检查（用户配置了自己的 API Key 后不受限）
+    if (isUsingBuiltinConfig() && !hasTrialQuota()) {
+      pushAI(`今日试用次数已用完（每天 ${DAILY_TRIAL_LIMIT} 次），请明天再试或在设置中配置自己的 API Key。`, 'error');
+      return;
+    }
+
     setInput('');
     const userMsg: ChatMessage = { role: 'user', text: t };
     const next = [...messages, userMsg];
@@ -283,6 +293,11 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
           });
         },
       }, activeAgent);
+    // 试用用户：记录一次调用，更新配额显示
+    if (isUsingBuiltinConfig()) {
+      recordTrialUsage();
+      setQuotaVersion((v) => v + 1);
+    }
     setLoading(false);
   };
 
@@ -386,6 +401,12 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
   const closeChat = () => {
     setChatOpen(false);
     inputRef.current?.blur();
+  };
+
+  /** 点击试用提示横幅：关闭聊天弹框，跳转到设置页 AI 配置区 */
+  const goToAIConfig = () => {
+    setChatOpen(false);
+    onNavigateToSettings?.();
   };
 
   // 资产/负债账户分组
@@ -647,6 +668,20 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
                 </div>
               ))}
             </div>
+          )}
+
+          {/* 试用用户提示横幅：基础模型能力较弱，引导配置自己的模型 */}
+          {usingBuiltin && (
+            <button type="button" className="trial-banner" onClick={goToAIConfig}>
+              <span className="trial-banner-icon">💡</span>
+              <span className="trial-banner-text">
+                当前使用基础模型，能力较弱。添加你自己的 API Key 可获得更强能力
+                <span className="trial-banner-link">去配置 ›</span>
+              </span>
+              <span className="trial-banner-quota">
+                今日剩余 {isUsingBuiltinConfig() ? getTrialRemaining() : DAILY_TRIAL_LIMIT}/{DAILY_TRIAL_LIMIT}
+              </span>
+            </button>
           )}
 
           {/* 消息列表 */}

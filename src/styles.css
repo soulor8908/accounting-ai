@@ -2811,7 +2811,7 @@ input[type="month"]:focus {
 }
 
 .chat-entry:active {
-  transform: scale(0.99);
+  transform: translateX(-50%) scale(0.99);
 }
 
 .chat-entry-icon {
@@ -2960,6 +2960,54 @@ input[type="month"]:focus {
   border-radius: 999px;
   box-shadow: var(--shadow-sm);
   flex-shrink: 0;
+}
+
+/* ---------- 试用提示横幅 ---------- */
+.trial-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--amber-tint);
+  color: var(--ink-soft);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.16s ease;
+}
+
+.trial-banner:hover {
+  background: #f7e6c4;
+}
+
+.trial-banner-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+}
+
+.trial-banner-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.trial-banner-link {
+  color: var(--pine);
+  font-weight: 600;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.trial-banner-quota {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--amber);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* 关闭按钮：与工具栏按钮风格统一，但稍大 */
