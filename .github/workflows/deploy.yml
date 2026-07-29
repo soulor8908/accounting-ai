@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Pages
+name: Deploy to Cloudflare
 
 on:
   push:
@@ -10,8 +10,11 @@ permissions:
   deployments: write
 
 jobs:
-  build-and-deploy:
+  # ─── Job 1: 测试 + 构建 + 部署 Worker ──────────────────────────
+  test-and-build:
     runs-on: ubuntu-latest
+    outputs:
+      worker-url: ${{ steps.proxy-url.outputs.url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,10 +34,79 @@ jobs:
       - name: Test
         run: npm test
 
+      # ── 部署 Worker（试用代理）──
+      # 自动检测：AGNES_API_KEY + CF 凭据齐全才部署，否则跳过
+      - name: Deploy AI Proxy Worker
+        id: deploy-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::Cloudflare 凭据未配置，跳过 Worker 部署"
+            exit 0
+          fi
+          if [ -z "$AGNES_API_KEY" ]; then
+            echo "::notice::AGNES_API_KEY 未配置，跳过 Worker 部署。试用功能不可用，用户需自带 API Key。"
+            exit 0
+          fi
+
+          cd worker/ai-proxy
+          npm install
+          # 部署 Worker
+          npx wrangler deploy 2>&1 | tee deploy.log
+          # 从输出中解析 Worker URL（格式：https://agnes-ai-proxy.<subdomain>.workers.dev）
+          WORKER_URL=$(grep -oE 'https://[a-z0-9-]+\.workers\.dev' deploy.log | head -1)
+          echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
+          echo "✓ Worker deployed: $WORKER_URL"
+          # 注入试用 API Key 作为 Worker Secret
+          echo "$AGNES_API_KEY" | npx wrangler secret put AGNES_API_KEY
+          echo "✓ AGNES_API_KEY secret injected"
+
+      # ── 确定 Proxy URL ──
+      # 优先用本次部署捕获的 URL；其次用 GitHub Secret 里的固定值
+      - name: Determine proxy URL
+        id: proxy-url
+        env:
+          DEPLOYED_URL: ${{ steps.deploy-worker.outputs.worker_url }}
+          SECRET_URL: ${{ secrets.VITE_TRIAL_PROXY_URL }}
+        run: |
+          URL="${DEPLOYED_URL:-$SECRET_URL}"
+          if [ -z "$URL" ]; then
+            echo "::notice::试用代理未启用。用户需自带 API Key 才能使用 AI 功能。"
+          else
+            echo "✓ Trial proxy URL: $URL"
+          fi
+          echo "url=$URL" >> $GITHUB_OUTPUT
+
+      # ── 构建前端（注入 Proxy URL）──
       - name: Build
         env:
-          VITE_TRIAL_PROXY_URL: ${{ secrets.VITE_TRIAL_PROXY_URL }}
+          VITE_TRIAL_PROXY_URL: ${{ steps.proxy-url.outputs.url }}
         run: npm run build
+
+      # ── 上传构建产物供下游 job 使用 ──
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  # ─── Job 2: 部署 Pages ────────────────────────────────────────
+  deploy-pages:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
 
       - name: Check Cloudflare secrets
         env:
@@ -43,16 +115,25 @@ jobs:
         run: |
           if [ -z "$CF_TOKEN" ] || [ -z "$CF_ACCOUNT" ]; then
             echo "::error::缺少 Cloudflare secrets。请在 GitHub Settings → Secrets and variables → Actions 添加："
-            echo "::error::  CLOUDFLARE_API_TOKEN   - Cloudflare API Token（需 Pages:Edit 权限）"
+            echo "::error::  CLOUDFLARE_API_TOKEN   - Cloudflare API Token（需 Workers + Pages 权限）"
             echo "::error::  CLOUDFLARE_ACCOUNT_ID  - Cloudflare Account ID（控制台右下角）"
             exit 1
           fi
           echo "✓ Cloudflare secrets 已配置"
 
-      - name: Publish to Cloudflare Pages
+      # 创建 Pages 项目（已存在则跳过）
+      - name: Create Pages project if not exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler pages project create modern-ledger --production-branch=main 2>&1 || {
+            echo "::notice::Pages 项目可能已存在，继续部署..."
+          }
+
+      - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: '4.14.0'
           command: pages deploy dist --project-name=modern-ledger --commit-dirty=true

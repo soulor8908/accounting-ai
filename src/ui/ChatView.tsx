@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { type EngineResult, formatMoney } from '../core/engine/engine';
-import { getEffectiveConfig, isUsingBuiltinConfig } from '../core/ai/config';
+import { getEffectiveConfig, isTrialAvailable, isUsingBuiltinConfig } from '../core/ai/config';
 import { type ChatMessage as AIMessage, chatWithAI } from '../core/ai/client';
 import { extractHabit } from '../core/ai/habits';
 import type { Account, Transaction } from '../core/types';
@@ -196,6 +196,7 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
   const send = async (text: string) => {
     const t = text.trim();
     if (!t || loading) return;
+
     setInput('');
     const userMsg: ChatMessage = { role: 'user', text: t };
     const next = [...messages, userMsg];
@@ -204,6 +205,7 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
     setLoading(true);
 
     // 始终使用 AI（内置试用配置或用户自定义配置）
+    // AI 不可用时 onError 回退到本地引擎，简单记账仍可用
     const effectiveConfig = getEffectiveConfig();
     const history = toAIMessages(messages);
     let thinkingShown = false;
@@ -397,8 +399,11 @@ export function ChatView({ onChanged }: { onChanged: () => void }) {
   };
 
   const usingBuiltin = isUsingBuiltinConfig();
+  const trialReady = isTrialAvailable();
   const inputPlaceholder = usingBuiltin
-    ? '输入消息，AI 帮你记账（试用中）...'
+    ? (trialReady
+        ? '输入消息，AI 帮你记账（试用中）...'
+        : '输入消息，AI 帮你记账（请在设置页配置 API Key）...')
     : '输入消息，AI 帮你记账...';
 
   // 近期流水（首页中间展示）

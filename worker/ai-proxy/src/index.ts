@@ -4,19 +4,24 @@
  * 职责：
  * 1. 持有试用 API Key（存为 Worker Secret `AGNES_API_KEY`），前端不再暴露
  * 2. 代理转发请求到上游 OpenAI 兼容 API（支持 SSE 流式）
- * 3. 按 IP 限流（KV 固定窗口：30 次/分钟），防止试用额度被刷
+ * 3. 按 IP 限流（内存固定窗口：30 次/分钟），防止试用额度被刷
+ *
+ * 限流方案选型：
+ * - 内存 Map（本实现）：零配置，部署即用。每个 isolate 独立计数，
+ *   跨 isolate 不精确但足以防批量刷。适合试用场景。
+ * - KV：需手动创建 namespace，最终一致性导致临界超限。已弃用。
  *
  * 部署：
  *   wrangler deploy
- *   wrangler secret put AGNES_API_KEY   # 输入上游 API Key
+ *   echo "$KEY" | wrangler secret put AGNES_API_KEY
  *
  * 前端通过 VITE_TRIAL_PROXY_URL 环境变量指向此 Worker。
  */
 
 /** 限流：每 IP 每分钟最大请求数 */
 const RATE_LIMIT_PER_MIN = 30;
-/** KV TTL（秒）：略大于窗口，确保旧桶过期后被回收 */
-const RATE_TTL_SEC = 120;
+/** 窗口大小（毫秒） */
+const WINDOW_MS = 60_000;
 
 /** 允许转发的前缀白名单，防止被当开放代理用 */
 const ALLOWED_TARGET_PREFIXES = [
@@ -27,7 +32,35 @@ const ALLOWED_TARGET_PREFIXES = [
 
 interface Env {
   AGNES_API_KEY: string;
-  RATE_LIMITS: KVNamespace;
+}
+
+/**
+ * 内存限流：每个 isolate 维护一个 IP → 计数器的 Map。
+ * 过期条目在写入时惰性清理，避免额外定时器。
+ */
+const rateMap = new Map<string, { count: number; expiresAt: number }>();
+
+function checkRateLimit(ip: string): { exceeded: boolean; count: number } {
+  const now = Date.now();
+  // 惰性清理过期条目（最多扫 200 条，避免每次请求 O(n) 全扫）
+  if (rateMap.size > 500) {
+    for (const [key, val] of rateMap) {
+      if (val.expiresAt <= now) rateMap.delete(key);
+    }
+  }
+
+  const entry = rateMap.get(ip);
+  if (entry && entry.expiresAt > now) {
+    if (entry.count >= RATE_LIMIT_PER_MIN) {
+      return { exceeded: true, count: entry.count };
+    }
+    entry.count++;
+    return { exceeded: false, count: entry.count };
+  }
+
+  // 新窗口
+  rateMap.set(ip, { count: 1, expiresAt: now + WINDOW_MS });
+  return { exceeded: false, count: 1 };
 }
 
 /** Cloudflare Workers 提供的 Headers 类型在运行时是全局可用的 */
@@ -44,7 +77,7 @@ export default {
 
     // 限流检查
     const clientIP = getClientIP(request);
-    const rateResult = await checkRateLimit(env, clientIP);
+    const rateResult = checkRateLimit(clientIP);
     if (rateResult.exceeded) {
       return json(
         { error: { message: `请求过于频繁，每分钟限 ${RATE_LIMIT_PER_MIN} 次，请稍后再试` } },
@@ -67,7 +100,7 @@ export default {
     const clientKey = request.headers.get('X-API-Key')?.trim() ?? '';
     const apiKey = clientKey || env.AGNES_API_KEY;
     if (!apiKey) {
-      return json({ error: { message: 'Server misconfigured: missing API key' } }, 500);
+      return json({ error: { message: 'Server misconfigured: missing API key. 请运行 wrangler secret put AGNES_API_KEY' } }, 500);
     }
 
     // 转发请求体，用最终 apiKey 设置 Authorization
@@ -126,37 +159,4 @@ function getClientIP(request: Request): string {
   return request.headers.get('CF-Connecting-IP')
     ?? request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
     ?? 'unknown';
-}
-
-/**
- * KV 固定窗口限流
- * - key: `rl:{ip}:{yyyymmddHHMM}`
- * - value: 累计请求数
- * - TTL: 120s，确保旧桶过期后被自动回收
- *
- * 注意：KV 是最终一致的，极端情况下可能略超限，但足以防止试用额度被批量刷。
- */
-async function checkRateLimit(env: Env, ip: string): Promise<{ exceeded: boolean; count: number }> {
-  if (!env.RATE_LIMITS) {
-    // KV 未绑定时不限流（开发环境）
-    return { exceeded: false, count: 0 };
-  }
-  const now = new Date();
-  const bucket =
-    `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}` +
-    `${String(now.getUTCDate()).padStart(2, '0')}` +
-    `${String(now.getUTCHours()).padStart(2, '0')}` +
-    `${String(now.getUTCMinutes()).padStart(2, '0')}`;
-  const key = `rl:${ip}:${bucket}`;
-
-  const raw = await env.RATE_LIMITS.get(key);
-  const count = raw ? parseInt(raw, 10) : 0;
-
-  if (count >= RATE_LIMIT_PER_MIN) {
-    return { exceeded: true, count };
-  }
-
-  const next = count + 1;
-  await env.RATE_LIMITS.put(key, String(next), { expirationTtl: RATE_TTL_SEC });
-  return { exceeded: false, count: next };
 }
