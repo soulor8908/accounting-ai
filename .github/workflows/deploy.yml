@@ -123,30 +123,31 @@ jobs:
 
       # 部署到 Cloudflare Pages
       # 用 npx wrangler（版本与 test-and-build job 一致），不用 wrangler-action（默认旧版 3.x 会找不到项目）
-      # 优先部署到用户访问的旧项目 accounting-ai-caf（覆盖挂掉的旧部署）；
-      # 若旧项目不属于本账号（占用错误），回退到 accounting-ai-caf-57q
-      - name: "Deploy to Cloudflare Pages (primary: accounting-ai-caf)"
-        id: deploy-pages
+      # 目标项目：accounting-ai-tool → subdomain: accounting-ai-tool.pages.dev
+      # 旧 URL accounting-ai-caf.pages.dev 不在本账号下无法覆盖，改用新项目名获取干净的 subdomain
+      - name: "Ensure Pages project exists (accounting-ai-tool)"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set +e
-          npx wrangler@4 pages deploy dist --project-name=accounting-ai-caf --commit-dirty=true 2>&1 | tee deploy-primary.log
-          PRIMARY_EXIT=${PIPESTATUS[0]}
-          if [ $PRIMARY_EXIT -eq 0 ]; then
-            echo "deployed=accounting-ai-caf" >> $GITHUB_OUTPUT
-            echo "✓ Primary project deployed: accounting-ai-caf"
+          # 项目已存在时 create 会报错，忽略即可
+          npx wrangler@4 pages project create accounting-ai-tool --production-branch=main 2>&1 | tee project-create.log
+          CREATE_EXIT=${PIPESTATUS[0]}
+          if [ $CREATE_EXIT -eq 0 ]; then
+            echo "✓ Project created: accounting-ai-tool"
           else
-            echo "::warning::部署到 accounting-ai-caf 失败（exit=$PRIMARY_EXIT），将回退到 accounting-ai-caf-57q"
-            echo "deployed=none" >> $GITHUB_OUTPUT
+            # 已存在或其他可接受错误，继续部署
+            if grep -qiE "already exists|10001|8000011" project-create.log; then
+              echo "✓ Project already exists: accounting-ai-tool"
+            else
+              echo "::warning::project create 返回非零（exit=$CREATE_EXIT），继续尝试部署"
+              cat project-create.log
+            fi
           fi
 
-      - name: "Deploy to fallback project (accounting-ai-caf-57q)"
-        if: steps.deploy-pages.outputs.deployed == 'none'
+      - name: "Deploy to Cloudflare Pages (accounting-ai-tool)"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          npx wrangler@4 pages deploy dist --project-name=accounting-ai-caf-57q --commit-dirty=true
-          echo "::notice::已回退部署到 accounting-ai-caf-57q。用户访问的 accounting-ai-caf.pages.dev 仍指向旧部署，需在 Cloudflare 控制台删除该旧项目或将其重命名。"
+        run: npx wrangler@4 pages deploy dist --project-name=accounting-ai-tool --commit-dirty=true
