@@ -123,9 +123,30 @@ jobs:
 
       # 部署到 Cloudflare Pages
       # 用 npx wrangler（版本与 test-and-build job 一致），不用 wrangler-action（默认旧版 3.x 会找不到项目）
-      # 项目名 accounting-ai-caf-57q 是 wrangler 自动创建的（旧名 accounting-ai-caf 被占用）
-      - name: Deploy to Cloudflare Pages
+      # 优先部署到用户访问的旧项目 accounting-ai-caf（覆盖挂掉的旧部署）；
+      # 若旧项目不属于本账号（占用错误），回退到 accounting-ai-caf-57q
+      - name: Deploy to Cloudflare Pages (primary: accounting-ai-caf)
+        id: deploy-pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler@4 pages deploy dist --project-name=accounting-ai-caf-57q --commit-dirty=true
+        run: |
+          set +e
+          npx wrangler@4 pages deploy dist --project-name=accounting-ai-caf --commit-dirty=true 2>&1 | tee deploy-primary.log
+          PRIMARY_EXIT=${PIPESTATUS[0]}
+          if [ $PRIMARY_EXIT -eq 0 ]; then
+            echo "deployed=accounting-ai-caf" >> $GITHUB_OUTPUT
+            echo "✓ Primary project deployed: accounting-ai-caf"
+          else
+            echo "::warning::部署到 accounting-ai-caf 失败（exit=$PRIMARY_EXIT），将回退到 accounting-ai-caf-57q"
+            echo "deployed=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy to fallback project (accounting-ai-caf-57q)
+        if: steps.deploy-pages.outputs.deployed == 'none'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler@4 pages deploy dist --project-name=accounting-ai-caf-57q --commit-dirty=true
+          echo "::notice::已回退部署到 accounting-ai-caf-57q。用户访问的 accounting-ai-caf.pages.dev 仍指向旧部署，需在 Cloudflare 控制台删除该旧项目或将其重命名。"
