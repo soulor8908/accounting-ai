@@ -2,8 +2,13 @@ name = "agnes-ai-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
-# 限流使用 Worker isolate 内存（全局 Map），无需 KV namespace，零配置部署。
-# 跨 isolate 不精确，但足以防止试用额度被批量刷。
+# 限流默认使用 Worker isolate 内存（零配置）。
+# 若要跨 isolate 一致的限流，创建并绑定 KV namespace：
+#   wrangler kv namespace create RATE_LIMIT_KV
+# 将输出中的 id 填入下方 binding 的 id 字段即可（绑定后自动启用 KVRateStore）。
+# [[kv_namespaces]]
+# binding = "RATE_LIMIT_KV"
+# id = "替换为你的_kv_namespace_id"
 
 # 试用 API Key 通过 Secret 注入，不写在此文件中：
 #   echo "$KEY" | wrangler secret put AGNES_API_KEY

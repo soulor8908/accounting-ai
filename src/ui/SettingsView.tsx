@@ -4,6 +4,8 @@ import { AI_PROVIDERS, type AIConfig, clearAIConfig, defaultConfig, loadAIConfig
 import { testAIConfig } from '../core/ai/client';
 import { isValidStateShape } from '../core/store/store';
 import type { MemoryCategory } from '../core/store/memory';
+import { isStrongPassword } from '../core/security/crypto';
+import { createBackup, restoreBackup } from '../core/security/backup';
 import { isVaultEnabled, lock } from '../core/security/vault';
 import { chatStore, memoryStore, store } from './appState';
 import { resetChatHistory } from './ChatView';
@@ -31,6 +33,7 @@ const MEMORY_CATEGORY_LABEL: Record<MemoryCategory, string> = {
 
 export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onLock?: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const encFileRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState('');
 
   // AI 配置
@@ -156,6 +159,51 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
       setMessage('导入成功');
     } catch {
       setMessage('导入失败：无法解析文件');
+    }
+  };
+
+  /** 导出全量加密备份（账本+聊天+记忆+AI 配置），需设置口令 */
+  const exportEncrypted = async () => {
+    const pw = await dialog.prompt(
+      '设置备份口令（用于加密，恢复时需要）',
+      '',
+      '至少8位，含字母和数字',
+      '导出加密备份',
+    );
+    if (!pw) return;
+    if (!isStrongPassword(pw)) {
+      setMessage('口令过弱：至少8位且含字母和数字');
+      return;
+    }
+    try {
+      const json = await createBackup(pw);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `记账备份_${new Date().toISOString().slice(0, 10)}.abak`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMessage('已导出加密备份（.abak）');
+      dialog.toast('已导出加密备份', 'success');
+    } catch {
+      setMessage('导出失败');
+    }
+  };
+
+  /** 导入加密备份：选文件 → 输入口令 → 还原 */
+  const importEncrypted = async (file: File) => {
+    const text = await file.text();
+    const pw = await dialog.prompt('输入备份口令', '', '导出时设置的口令', '导入加密备份');
+    if (!pw) return;
+    const ok = await restoreBackup(text, pw);
+    if (ok) {
+      onChanged();
+      setMessage('加密备份已还原');
+      dialog.toast('加密备份已还原', 'success');
+    } else {
+      setMessage('还原失败：口令错误或文件已损坏');
+      dialog.toast('还原失败', 'error');
     }
   };
 
@@ -537,6 +585,23 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
             e.target.value = '';
           }}
         />
+        <button type="button" onClick={exportEncrypted}>
+          导出加密备份
+        </button>
+        <button type="button" onClick={() => encFileRef.current?.click()}>
+          导入加密备份
+        </button>
+        <input
+          ref={encFileRef}
+          type="file"
+          accept=".abak,application/json"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void importEncrypted(f);
+            e.target.value = '';
+          }}
+        />
         <button type="button" className="danger" onClick={clearAllChats}>
           清空聊天记录
         </button>
@@ -544,6 +609,7 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
           清空全部数据
         </button>
       </div>
+      <p className="meta">「导出加密备份」会把账本、聊天、记忆与 AI 配置一起加密成一个 .abak 文件，可跨设备恢复，解决纯本地存储清缓存即丢数据的问题。</p>
       {message && <p className="info-text">{message}</p>}
       <p className="meta">数据仅存储在本地浏览器，不会上传。建议定期导出备份。</p>
 

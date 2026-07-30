@@ -4,24 +4,23 @@
  * 职责：
  * 1. 持有试用 API Key（存为 Worker Secret `AGNES_API_KEY`），前端不再暴露
  * 2. 代理转发请求到上游 OpenAI 兼容 API（支持 SSE 流式）
- * 3. 按 IP 限流（内存固定窗口：30 次/分钟），防止试用额度被刷
+ * 3. 按 IP 限流（默认内存固定窗口 30 次/分钟；绑定 RATE_LIMIT_KV 后跨 isolate 一致），防止试用额度被刷
  *
- * 限流方案选型：
- * - 内存 Map（本实现）：零配置，部署即用。每个 isolate 独立计数，
- *   跨 isolate 不精确但足以防批量刷。适合试用场景。
- * - KV：需手动创建 namespace，最终一致性导致临界超限。已弃用。
+ * 限流方案（见 ratelimit.ts）：
+ * - 内存 MemoryRateStore：零配置，部署即用。每个 isolate 独立计数，冷启清零，
+ *   适合本地开发 / 未绑定 KV 的场景。
+ * - KV KVRateStore：跨 isolate 一致计数，写入带 60s TTL 自动过期。
+ *   部署时通过 wrangler.toml 的 [[kv_namespaces]] 绑定 `RATE_LIMIT_KV` 即可启用。
  *
  * 部署：
  *   wrangler deploy
  *   echo "$KEY" | wrangler secret put AGNES_API_KEY
+ *   # 可选：创建并绑定限流 KV
+ *   # wrangler kv namespace create RATE_LIMIT_KV
+ *   # 将输出的 id 填入 wrangler.toml 的 binding
  *
  * 前端通过 VITE_TRIAL_PROXY_URL 环境变量指向此 Worker。
  */
-
-/** 限流：每 IP 每分钟最大请求数 */
-const RATE_LIMIT_PER_MIN = 30;
-/** 窗口大小（毫秒） */
-const WINDOW_MS = 60_000;
 
 /** 允许转发的前缀白名单，防止被当开放代理用 */
 const ALLOWED_TARGET_PREFIXES = [
@@ -30,40 +29,17 @@ const ALLOWED_TARGET_PREFIXES = [
   'https://api.mimo.xiaomi.com',
 ];
 
+import { checkRateLimit, KVRateStore, MemoryRateStore, RATE_LIMIT_PER_MIN, type RateStore } from './ratelimit';
+
+/** 默认内存限流（未绑定 KV 时使用） */
+const memoryRateStore = new MemoryRateStore();
+
 interface Env {
   AGNES_API_KEY: string;
+  /** 可选：绑定后限流计数跨 isolate 一致 */
+  RATE_LIMIT_KV?: KVNamespace;
 }
 
-/**
- * 内存限流：每个 isolate 维护一个 IP → 计数器的 Map。
- * 过期条目在写入时惰性清理，避免额外定时器。
- */
-const rateMap = new Map<string, { count: number; expiresAt: number }>();
-
-function checkRateLimit(ip: string): { exceeded: boolean; count: number } {
-  const now = Date.now();
-  // 惰性清理过期条目（最多扫 200 条，避免每次请求 O(n) 全扫）
-  if (rateMap.size > 500) {
-    for (const [key, val] of rateMap) {
-      if (val.expiresAt <= now) rateMap.delete(key);
-    }
-  }
-
-  const entry = rateMap.get(ip);
-  if (entry && entry.expiresAt > now) {
-    if (entry.count >= RATE_LIMIT_PER_MIN) {
-      return { exceeded: true, count: entry.count };
-    }
-    entry.count++;
-    return { exceeded: false, count: entry.count };
-  }
-
-  // 新窗口
-  rateMap.set(ip, { count: 1, expiresAt: now + WINDOW_MS });
-  return { exceeded: false, count: 1 };
-}
-
-/** Cloudflare Workers 提供的 Headers 类型在运行时是全局可用的 */
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     // CORS 预检
@@ -75,9 +51,10 @@ export default {
       return json({ error: 'Method not allowed' }, 405);
     }
 
-    // 限流检查
+    // 限流检查（绑定 KV 则走跨 isolate 一致计数，否则内存计数）
     const clientIP = getClientIP(request);
-    const rateResult = checkRateLimit(clientIP);
+    const store: RateStore = env.RATE_LIMIT_KV ? new KVRateStore(env.RATE_LIMIT_KV) : memoryRateStore;
+    const rateResult = await checkRateLimit(store, clientIP);
     if (rateResult.exceeded) {
       return json(
         { error: { message: `请求过于频繁，每分钟限 ${RATE_LIMIT_PER_MIN} 次，请稍后再试` } },
@@ -155,7 +132,7 @@ function json(data: unknown, status = 200, extra?: Record<string, string>): Resp
 }
 
 function getClientIP(request: Request): string {
-  // Cloudflare 提供 CF-Connecting-IP
+  // Cloudflare 提供 CF-Connecting-IP（边缘可信）；XFF 仅作兜底
   return request.headers.get('CF-Connecting-IP')
     ?? request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
     ?? 'unknown';

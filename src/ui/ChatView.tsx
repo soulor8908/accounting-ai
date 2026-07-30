@@ -201,6 +201,32 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
     const t = text.trim();
     if (!t || loading) return;
 
+    const effectiveConfig = getEffectiveConfig();
+    const useLocal = !effectiveConfig.apiKey.trim() && !effectiveConfig.proxyUrl;
+
+    // 纯本地模式：无 API Key 且无试用代理，直接走确定性引擎，不发起网络请求
+    if (useLocal) {
+      setInput('');
+      const userMsg: ChatMessage = { role: 'user', text: t };
+      const next = [...messages, userMsg];
+      setMessages(next);
+      persistSession(activeSessionId, next);
+      setLoading(true);
+      const r = engine.handle(t);
+      const aiMsg: ChatMessage = {
+        role: 'ai',
+        text: r.message,
+        status: (r.status === 'clarify' ? 'clarify' : r.status) as ChatMessage['status'],
+        options: r.clarifyOptions,
+      };
+      const finalMsgs = [...next, aiMsg];
+      setMessages(finalMsgs);
+      persistSession(activeSessionId, finalMsgs);
+      onChanged();
+      setLoading(false);
+      return;
+    }
+
     // 试用用户每日配额检查（用户配置了自己的 API Key 后不受限）
     if (isUsingBuiltinConfig() && !hasTrialQuota()) {
       pushAI(`今日试用次数已用完（每天 ${DAILY_TRIAL_LIMIT} 次），请明天再试或在设置中配置自己的 API Key。`, 'error');
@@ -214,9 +240,6 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
     persistSession(activeSessionId, next);
     setLoading(true);
 
-    // 始终使用 AI（内置试用配置或用户自定义配置）
-    // AI 不可用时 onError 回退到本地引擎，简单记账仍可用
-    const effectiveConfig = getEffectiveConfig();
     const history = toAIMessages(messages);
     let thinkingShown = false;
 
@@ -426,7 +449,7 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
   const inputPlaceholder = usingBuiltin
     ? (trialReady
         ? '输入消息，AI 帮你记账（试用中）...'
-        : '输入消息，AI 帮你记账（请在设置页配置 API Key）...')
+        : '输入消息，离线也能记账（本地解析，无需联网）...')
     : '输入消息，AI 帮你记账...';
 
   // 近期流水（首页中间展示）
