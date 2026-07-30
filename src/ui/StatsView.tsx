@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
-import { analyzeTrends } from '../core/analytics/trends';
+import { analyzeTrends, prevMonth } from '../core/analytics/trends';
+import { round2 } from '../core/utils/money';
 import { store } from './appState';
+import { TrendChart } from './TrendChart';
 
 function currentMonth(): string {
   const d = new Date();
@@ -19,6 +21,24 @@ export function StatsView() {
   const cats = store.getCategoryStats(month);
   const maxCat = cats[0]?.amount ?? 0;
   const trend = analyzeTrends(store.state.transactions, { referenceMonth: month });
+
+  // 逐日累计支出序列（本月 / 上月），供走势图使用
+  const buildCumulative = (m: string): { day: number; value: number }[] => {
+    const flows = store.getDailyFlows(m);
+    const [y, mo] = m.split('-').map(Number);
+    const dim = new Date(y, mo, 0).getDate();
+    let cum = 0;
+    const out: { day: number; value: number }[] = [];
+    for (let d = 1; d <= dim; d++) {
+      const key = `${m}-${String(d).padStart(2, '0')}`;
+      cum = round2(cum + (flows.get(key)?.expense ?? 0));
+      out.push({ day: d, value: cum });
+    }
+    return out;
+  };
+  const curSeries = buildCumulative(month);
+  const prevSeries = buildCumulative(prevMonth(month));
+  const prevTotal = prevSeries.length > 0 ? prevSeries[prevSeries.length - 1].value : 0;
 
   return (
     <div className="panel">
@@ -63,6 +83,8 @@ export function StatsView() {
           <span className="overview-value">¥{formatMoney(trend.projectedMonthExpense)}</span>
         </div>
       </div>
+      <h3>支出走势</h3>
+      <TrendChart current={curSeries} previous={prevSeries} prevTotal={prevTotal} projected={trend.projectedMonthExpense} />
       {(trend.topRisers.length > 0 || trend.topFallers.length > 0) && (
         <>
           <h3>分类涨跌（对比上月）</h3>
