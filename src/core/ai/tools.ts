@@ -4,6 +4,7 @@
  */
 import { formatMoney } from '../engine/engine';
 import { analyzeTrends, formatTrendReport } from '../analytics/trends';
+import { detectAnomalies, formatAnomalyReport } from '../analytics/anomaly';
 import { store, memoryStore } from '../../ui/appState';
 import { ValidationError } from '../store/store';
 import type { MemoryCategory } from '../store/memory';
@@ -139,6 +140,19 @@ export const AI_TOOLS = [
     function: {
       name: 'analyze_trends',
       description: '消费趋势分析：计算指定月份的支出/收入环比（对比上月）与同比（对比去年同月）、各分类增减、最大涨/跌幅分类，以及按当前节奏预测的全月支出。用户问「这个月比上个月如何」「消费趋势」「环比/同比」「哪些类别涨了」时调用，避免手动翻阅 list_transactions 计算。',
+      parameters: {
+        type: 'object',
+        properties: {
+          month: { type: 'string', description: '参考月份 YYYY-MM（可选，默认本月）' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'analyze_anomalies',
+      description: '异常消费检测：基于每个分类的历史基线（均值/标准差/最高值），找出指定月份内明显偏离日常的支出（如金额是历史均值数倍、或创分类历史新高）。用户问「有没有异常消费」「哪笔花得离谱」「这个月有没有不对劲的支出」时调用，避免手动翻阅 list_transactions 判断。',
       parameters: {
         type: 'object',
         properties: {
@@ -295,6 +309,8 @@ export function executeTool(call: ToolCall): ToolResult {
         return execQueryOverview(call.arguments);
       case 'analyze_trends':
         return execAnalyzeTrends(call.arguments);
+      case 'analyze_anomalies':
+        return execAnalyzeAnomalies(call.arguments);
       case 'query_upcoming_payments':
         return execQueryUpcomingPayments(call.arguments);
       case 'add_account':
@@ -574,6 +590,15 @@ function execAnalyzeTrends(args: Record<string, unknown>): ToolResult {
   }
   const report = analyzeTrends(store.state.transactions, { referenceMonth: month });
   return { name: 'analyze_trends', result: formatTrendReport(report), success: true };
+}
+
+function execAnalyzeAnomalies(args: Record<string, unknown>): ToolResult {
+  const month = (args.month as string) || todayStr().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return { name: 'analyze_anomalies', result: 'month 格式应为 YYYY-MM', success: false };
+  }
+  const report = detectAnomalies(store.state.transactions, { referenceMonth: month });
+  return { name: 'analyze_anomalies', result: formatAnomalyReport(report), success: true };
 }
 
 function execQueryUpcomingPayments(args: Record<string, unknown>): ToolResult {

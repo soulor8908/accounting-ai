@@ -636,6 +636,87 @@ main {
   display: inline-block;
 }
 
+/* ---------- 异常提醒列表 ---------- */
+.anomaly-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.anomaly-item {
+  background: var(--card-warm);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.anomaly-item.sev-high {
+  border-left-color: var(--cinnabar);
+  background: linear-gradient(0deg, var(--cinnabar-tint), var(--card));
+}
+
+.anomaly-item.sev-medium {
+  border-left-color: var(--amber);
+  background: linear-gradient(0deg, var(--amber-tint), var(--card));
+}
+
+.anomaly-item.sev-low {
+  border-left-color: var(--pine);
+}
+
+.anomaly-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.anomaly-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--card);
+  background: var(--muted);
+  border-radius: 6px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+}
+
+.sev-high .anomaly-tag {
+  background: var(--cinnabar);
+}
+
+.sev-medium .anomaly-tag {
+  background: var(--amber);
+}
+
+.sev-low .anomaly-tag {
+  background: var(--pine);
+}
+
+.anomaly-cat {
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.anomaly-amt {
+  margin-left: auto;
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.anomaly-reason {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
 /* 输入区 */
 .chat-input {
   display: flex;

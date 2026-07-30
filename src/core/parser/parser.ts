@@ -62,6 +62,7 @@ export type Intent =
   | { kind: 'query_balance'; accountHint?: string }
   | { kind: 'query_summary'; scope: 'today' | 'month' }
   | { kind: 'analyze_trend' }
+  | { kind: 'analyze_anomaly' }
   | { kind: 'undo' }
   | { kind: 'unknown'; text: string };
 
@@ -130,6 +131,13 @@ export function parse(text: string, now: Date): Intent {
     /趋势|环比|同比|(?:(?:这个月|本月|近期).{0,6}(?:比|对比|相比).{0,8}(?:上个月|上月|去年|往年))|(?:(?:比|跟|和).{0,2}(?:上个月|上月|去年|往年))|(?:分析.{0,4}(?:消费|支出|账|趋势))/;
   if (trendRe.test(input) && !extractAmount(input)) {
     return { kind: 'analyze_trend' };
+  }
+
+  // 异常消费检测：异常/反常/离谱/不对劲，或「有没有异常消费」「哪笔花得离谱」，且无具体金额
+  const anomalyRe =
+    /异常|反常|离谱|不对劲|超常|(?:有没有|有).{0,6}(?:异常|离谱).{0,4}(?:消费|支出|花)|(?:哪笔|哪几笔).{0,10}(?:花|支出|消费).{0,6}(?:异常|离谱|不对劲)/;
+  if (anomalyRe.test(input) && !extractAmount(input)) {
+    return { kind: 'analyze_anomaly' };
   }
 
   // 查询余额

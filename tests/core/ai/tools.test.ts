@@ -14,7 +14,7 @@ function seed() {
 }
 
 describe('AI tools 定义', () => {
-  it('包含 15 个工具', () => {
+  it('包含 16 个工具', () => {
     const names = AI_TOOLS.map((t) => t.function.name);
     expect(names).toEqual([
       'add_transaction',
@@ -25,6 +25,7 @@ describe('AI tools 定义', () => {
       'query_summary',
       'query_overview',
       'analyze_trends',
+      'analyze_anomalies',
       'query_upcoming_payments',
       'add_account',
       'list_accounts',
@@ -360,5 +361,21 @@ describe('executeTool - analyze_trends', () => {
     const r = executeTool({ name: 'analyze_trends', arguments: { month: '2026/06' } });
     expect(r.success).toBe(false);
     expect(r.result).toContain('YYYY-MM');
+  });
+});
+
+describe('executeTool - analyze_anomalies', () => {
+  beforeEach(seed);
+
+  it('返回异常消费清单', () => {
+    const acc = store.state.accounts[0];
+    for (let i = 0; i < 10; i++) {
+      store.applyTransaction({ type: 'expense', amount: 50, accountId: acc.id, category: '餐饮', description: '日常', date: `2026-05-${String(i + 1).padStart(2, '0')}` }, { confirm: true });
+    }
+    store.applyTransaction({ type: 'expense', amount: 1500, accountId: acc.id, category: '餐饮', description: '聚餐', date: '2026-06-10' }, { confirm: true });
+    const r = executeTool({ name: 'analyze_anomalies', arguments: { month: '2026-06' } });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('异常');
+    expect(r.result).toContain('餐饮');
   });
 });

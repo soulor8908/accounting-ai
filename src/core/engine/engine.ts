@@ -7,6 +7,7 @@ import { type AmountMatch, extractAmount } from '../parser/amount';
 import { formatDate } from '../parser/dateParser';
 import { type Intent, parse } from '../parser/parser';
 import { analyzeTrends, formatTrendReport } from '../analytics/trends';
+import { detectAnomalies, formatAnomalyReport } from '../analytics/anomaly';
 import { addMonthsClamped } from '../finance/loan';
 import { Store, ValidationError } from '../store/store';
 import type { Account, AccountType, Transaction } from '../types';
@@ -140,6 +141,8 @@ export class Engine {
         return this.executeQuerySummary(intent.scope);
       case 'analyze_trend':
         return this.executeAnalyzeTrend();
+      case 'analyze_anomaly':
+        return this.executeAnalyzeAnomaly();
       case 'expense':
       case 'income':
         return this.executeBasic(intent, ctx);
@@ -349,6 +352,11 @@ export class Engine {
   private executeAnalyzeTrend(): EngineResult {
     const report = analyzeTrends(this.store.state.transactions, { now: this.now() });
     return { status: 'ok', message: formatTrendReport(report) };
+  }
+
+  private executeAnalyzeAnomaly(): EngineResult {
+    const report = detectAnomalies(this.store.state.transactions, { now: this.now() });
+    return { status: 'ok', message: formatAnomalyReport(report) };
   }
 
   private executeQuerySummary(scope: 'today' | 'month'): EngineResult {

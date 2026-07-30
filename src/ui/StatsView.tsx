@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
 import { analyzeTrends, prevMonth } from '../core/analytics/trends';
+import { detectAnomalies } from '../core/analytics/anomaly';
 import { round2 } from '../core/utils/money';
 import { store } from './appState';
 import { TrendChart } from './TrendChart';
@@ -39,6 +40,7 @@ export function StatsView() {
   const curSeries = buildCumulative(month);
   const prevSeries = buildCumulative(prevMonth(month));
   const prevTotal = prevSeries.length > 0 ? prevSeries[prevSeries.length - 1].value : 0;
+  const anomaly = detectAnomalies(store.state.transactions, { referenceMonth: month });
 
   return (
     <div className="panel">
@@ -99,6 +101,23 @@ export function StatsView() {
               <li key={`f-${c.category}`}>
                 <span className="cat-name">↓ {c.category}</span>
                 <span className="cat-amount">¥{formatMoney(c.current)}（{pctLabel(c.pct)}）</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {anomaly.anomalies.length > 0 && (
+        <>
+          <h3>异常提醒</h3>
+          <ul className="anomaly-list">
+            {anomaly.anomalies.map((a, i) => (
+              <li key={i} className={`anomaly-item sev-${a.severity}`}>
+                <div className="anomaly-head">
+                  <span className="anomaly-tag">{a.severity === 'high' ? '高额' : a.severity === 'medium' ? '偏高' : '创新高'}</span>
+                  <span className="anomaly-cat">{a.category}</span>
+                  <span className="anomaly-amt">¥{formatMoney(a.amount)}</span>
+                </div>
+                <div className="anomaly-reason">{a.reason}（{a.txn.date}）</div>
               </li>
             ))}
           </ul>
