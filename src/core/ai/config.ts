@@ -215,7 +215,8 @@ export async function clearAIConfig(): Promise<void> {
 }
 
 export function defaultConfig(): AIConfig {
-  const preset = AI_PROVIDERS[0];
+  // 默认推荐 DeepSeek：国内访问稳定、CORS 友好、性价比高
+  const preset = AI_PROVIDERS.find((p) => p.id === 'deepseek') ?? AI_PROVIDERS[0];
   return {
     providerId: preset.id,
     apiKey: '',

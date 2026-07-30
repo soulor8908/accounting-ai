@@ -815,12 +815,11 @@ main {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: var(--card-warm);
-  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  transition: box-shadow 0.16s ease, border-color 0.16s ease;
 }
 
 .account-item:hover,
 .tx-item:hover {
-  transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
   border-color: var(--border);
 }
@@ -2259,6 +2258,54 @@ main {
 .memory-item:hover {
   border-color: var(--border);
   box-shadow: var(--shadow-sm);
+}
+
+/* ---------- 左滑操作行（账户/流水/记忆通用） ---------- */
+/* 结构：.swipe-row(overflow 容器) > [.swipe-actions(绝对定位右侧) + .swipe-content(可滑动)] */
+.swipe-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  /* 触摸滑动：禁止默认横向滚动干扰，保留纵向滚动 */
+  touch-action: pan-y;
+}
+.swipe-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+}
+.swipe-actions > button {
+  width: 64px;
+  border: none;
+  border-radius: 0;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  transition: filter 0.15s ease;
+}
+.swipe-actions > button:hover {
+  filter: brightness(1.08);
+}
+.swipe-actions > button.act-edit {
+  background: var(--pine);
+}
+.swipe-actions > button.act-delete {
+  background: var(--cinnabar, #c94f32);
+}
+.swipe-content {
+  position: relative;
+  z-index: 1;
+  background: var(--card-warm);
+  /* 内容区背景遮住背后的操作区；拖动时由内联 transform 控制 translateX */
+  touch-action: pan-y;
+  user-select: none;
 }
 
 .memory-main {

@@ -77,11 +77,13 @@ describe('AI config', () => {
     expect(loadAIConfig()).toBeNull();
   });
 
-  it('defaultConfig 返回首个预设，默认直连无 proxyUrl', () => {
+  it('defaultConfig 默认指向 DeepSeek，直连无 proxyUrl', () => {
     const cfg = defaultConfig();
-    expect(cfg.providerId).toBe(AI_PROVIDERS[0].id);
+    // 默认推荐 DeepSeek：国内访问稳定、CORS 友好、性价比高
+    expect(cfg.providerId).toBe('deepseek');
     expect(cfg.apiKey).toBe('');
     expect(cfg.proxyUrl).toBeUndefined();
+    expect(cfg.baseUrl).toBe('https://api.deepseek.com');
   });
 
   it('AI_PROVIDERS 至少包含 deepseek / mimo / custom', () => {

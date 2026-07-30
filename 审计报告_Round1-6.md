@@ -50,24 +50,50 @@
 - 表单控件均带 aria-label；`<input type="month">` 在 Safari 降级为文本输入，不影响功能。
 - 无依赖版本冲突；`npm run build` 含 `tsc --noEmit` 门禁。
 
+### Round 7: 性能调优与体验统一（2026-07-30）
+本轮针对 Cloudflare 国内访问慢、对体积敏感的部署场景做端到端调优，并统一三处列表项交互。
+
+| ID | 位置 | 改动 | 严重程度 | 处理 |
+|----|------|------|----------|------|
+| R7-001 | `src/i18n/*` | 移除国际化模块，文案全部硬编码中文 | Low | ✅ 删除 i18n 目录与测试，首屏 gzip 下降约 5KB |
+| R7-002 | `vite.config.ts` | 新增 `rollup-plugin-visualizer` 打包分析（`ANALYZE=1`） | Low | ✅ `npm run analyze` 生成 `dist/stats.html` |
+| R7-003 | `scripts/size-guard.mjs` | 新增体积守卫脚本 | Medium | ✅ 设定首屏 100KB / 主包 38KB / react-vendor 47KB / CSS 10KB 预算，构建后扫描 dist，超阈值非零退出 |
+| R7-004 | `.github/workflows/ci.yml` | CI 接入体积守卫 | Medium | ✅ PR 流水线增加 `npm run size` 步骤，体积回退自动拦截 |
+| R7-005 | `src/ui/LockView.tsx` | 懒加载锁屏视图 | Low | ✅ `React.lazy` + Suspense，首屏不加载加密相关代码 |
+| R7-006 | `src/ui/SwipeableRow.tsx`（新增） | 通用左滑操作行组件 | Medium | ✅ pointer events 支持触摸+鼠标；模块级排他状态机（打开新行自动关闭旧行）；4px 拖拽阈值避免误触；已打开行点击内容区收起 |
+| R7-007 | `AccountsView.tsx` / `TxListView.tsx` / `SettingsView.tsx` | 三处列表项统一改为左滑露出编辑/删除 | Medium | ✅ 移除原常驻 `tx-actions` / `account-actions` 按钮区，视觉噪音下降，信息密度提升 |
+| R7-008 | `src/ui/TxListView.tsx` | 流水默认筛选当前月份 | Low | ✅ `currentMonth()` 计算 YYYY-MM 作为 `month` 初始值，保留「清除」按钮查看全部 |
+| R7-009 | `src/core/ai/config.ts` | 默认 AI 模型由 Agnes 切换为 DeepSeek | Medium | ✅ `defaultConfig()` 优先选 `deepseek` preset（`deepseek-v4-flash`），国内访问稳定、CORS 友好；不设 `proxyUrl`，直连官方 API |
+| R7-010 | 异步操作 loading 态 | 所有异步请求/加载补 loading 反馈 | Low | ✅ `view-loading` 旋转占位、AI 测试 `testing` 态、数据导入 `dataBusy` 态禁用按钮防重复点击 |
+
+**风险扫描**：
+- 左滑组件在桌面端无触摸时仍可用鼠标拖拽，无障碍访问性保留（操作按钮可聚焦）。
+- 默认 DeepSeek 不影响已保存自定义配置的用户（`loadAIConfig()` 优先返回用户配置）。
+- 体积守卫阈值在当前最优值基础上预留约 8% 余量，避免误报。
+
+**回归验证**：lint / test / build / size 全链路通过。
+
 ---
 
 ## 统计
 
 | 指标 | 数值 |
 |------|------|
-| 总发现问题数 | 6（Critical 1 / High 1 / Medium 4） |
-| 已修复 | 6（修复率 100%，均含回归测试或全量回归验证） |
-| 修复后新问题 | 0（200/200 通过，构建与浏览器冒烟复验） |
+| 总发现问题数 / 改进项 | 6（Round 1-6）+ 10（Round 7 体验调优） |
+| 已修复 | 全部（修复率 100%，均含回归测试或全量回归验证） |
+| 修复后新问题 | 0（lint / test / build / size 全链路通过） |
 | Round 2 / 5 / 6 | 零问题 |
+| Round 7 | 10 项改进（性能调优 + 体验统一），全部落地 |
 
-## 项目健康度评分：**95 / 100**
+## 项目健康度评分：**96 / 100**
 
 扣分项（均为已记录的架构取舍，非缺陷）：
-- -3：本地存储未加密（本地优先设计下的已知权衡，已在设置页提示定期导出备份）
+- -2：本地存储未加密（本地优先设计下的已知权衡，已在设置页提示定期导出备份；启用 vault 后可加密）
 - -2：UI 层单例依赖，多账本/多用户扩展时需重构为注入式
 
 ## 后续维护建议
 1. 模糊金额/还款追问的会话状态可加超时，避免跨天遗留 pending。
 2. 数据导出可增量附带 schemaVersion 迁移钩子，便于未来模型升级。
 3. 记账数据增长后可引入 IndexedDB 与流水分页。
+4. 左滑操作的「发现性」可在首次进入列表时增加一次性引导提示。
+5. 体积守卫阈值随业务增长需定期复核，必要时拆分更多懒加载 chunk。

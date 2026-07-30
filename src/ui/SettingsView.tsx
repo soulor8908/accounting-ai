@@ -10,6 +10,7 @@ import { isVaultEnabled, lock } from '../core/security/vault';
 import { chatStore, memoryStore, store } from './appState';
 import { resetChatHistory } from './ChatView';
 import { dialog } from './Dialog';
+import { SwipeableRow } from './SwipeableRow';
 import {
   type Agent,
   addAgent,
@@ -503,51 +504,50 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
       <ul className="memory-list">
         {memories.length === 0 && <li className="empty">暂无记忆，可在上方添加或在对话中让 AI 自动记录</li>}
         {memories.map((m) => (
-          <li key={m.id} className="memory-item">
+          <li key={m.id}>
             {editingMemId === m.id ? (
-              <div className="memory-edit-form">
-                <input
-                  type="text"
-                  value={editMemContent}
-                  onChange={(e) => setEditMemContent(e.target.value)}
-                  aria-label="编辑记忆内容"
-                  maxLength={200}
-                  autoFocus
-                />
-                <select
-                  value={editMemCategory}
-                  onChange={(e) => setEditMemCategory(e.target.value as MemoryCategory)}
-                  aria-label="编辑记忆类型"
-                >
-                  {MEMORY_CATEGORY_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-                <div className="edit-actions">
-                  <button type="button" className="btn-primary-sm" onClick={saveEditMemory}>保存</button>
-                  <button type="button" className="btn-sm" onClick={cancelEditMemory}>取消</button>
+              <div className="memory-item">
+                <div className="memory-edit-form">
+                  <input
+                    type="text"
+                    value={editMemContent}
+                    onChange={(e) => setEditMemContent(e.target.value)}
+                    aria-label="编辑记忆内容"
+                    maxLength={200}
+                    autoFocus
+                  />
+                  <select
+                    value={editMemCategory}
+                    onChange={(e) => setEditMemCategory(e.target.value as MemoryCategory)}
+                    aria-label="编辑记忆类型"
+                  >
+                    {MEMORY_CATEGORY_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                  <div className="edit-actions">
+                    <button type="button" className="btn-primary-sm" onClick={saveEditMemory}>保存</button>
+                    <button type="button" className="btn-sm" onClick={cancelEditMemory}>取消</button>
+                  </div>
                 </div>
               </div>
             ) : (
-              <>
-                <div className="memory-main">
-                  <span className={`memory-tag cat-${m.category}`}>{MEMORY_CATEGORY_LABEL[m.category]}</span>
-                  {m.source === 'auto' && <span className="memory-tag auto">自动</span>}
-                  <span className="memory-content">{m.content}</span>
+              <SwipeableRow
+                actions={
+                  <>
+                    <button type="button" className="act-edit" onClick={() => startEditMemory(m.id, m.content, m.category)}>编辑</button>
+                    <button type="button" className="act-delete" onClick={() => deleteMemory(m.id, m.content)}>删除</button>
+                  </>
+                }
+              >
+                <div className="memory-item">
+                  <div className="memory-main">
+                    <span className={`memory-tag cat-${m.category}`}>{MEMORY_CATEGORY_LABEL[m.category]}</span>
+                    {m.source === 'auto' && <span className="memory-tag auto">自动</span>}
+                    <span className="memory-content">{m.content}</span>
+                  </div>
                 </div>
-                <div className="memory-actions">
-                  <button
-                    type="button"
-                    className="btn-sm"
-                    onClick={() => startEditMemory(m.id, m.content, m.category)}
-                  >编辑</button>
-                  <button
-                    type="button"
-                    className="btn-sm danger"
-                    onClick={() => deleteMemory(m.id, m.content)}
-                  >删除</button>
-                </div>
-              </>
+              </SwipeableRow>
             )}
           </li>
         ))}

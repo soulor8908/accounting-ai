@@ -3,6 +3,7 @@ import { formatMoney } from '../core/engine/engine';
 import type { Transaction, TxType } from '../core/types';
 import { store } from './appState';
 import { dialog } from './Dialog';
+import { SwipeableRow } from './SwipeableRow';
 
 const TYPE_LABEL: Record<TxType, string> = {
   income: '收入',
@@ -24,6 +25,12 @@ const SIGN: Record<TxType, string> = {
 
 const EDITABLE_TYPES: TxType[] = ['income', 'expense', 'refund', 'adjustment'];
 
+/** 当前月份（YYYY-MM），作为流水列表的默认筛选值 */
+function currentMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 interface EditState {
   id: string;
   description: string;
@@ -33,7 +40,7 @@ interface EditState {
 }
 
 export function TxListView({ onChanged }: { onChanged?: () => void }) {
-  const [month, setMonth] = useState('');
+  const [month, setMonth] = useState(currentMonth());
   const [editing, setEditing] = useState<EditState | null>(null);
   const [tick, setTick] = useState(0);
 
@@ -107,73 +114,76 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
       <ul className="tx-list">
         {txs.length === 0 && <li className="empty">暂无流水，去「对话」页记一笔吧</li>}
         {txs.map((t) => (
-          <li key={t.id} className="tx-item tx-item-with-actions">
+          <li key={t.id}>
             {editing && editing.id === t.id ? (
-              <div className="tx-edit-form">
-                <div className="form-row">
-                  <span>描述</span>
-                  <input
-                    type="text"
-                    value={editing.description}
-                    onChange={(e) => setEditing({ ...editing, description: e.target.value })}
-                    placeholder="描述"
-                  />
-                </div>
-                <div className="form-row-inline">
+              <div className="tx-item">
+                <div className="tx-edit-form">
                   <div className="form-row">
-                    <span>金额</span>
+                    <span>描述</span>
                     <input
-                      type="number"
-                      step="0.01"
-                      value={editing.amount}
-                      onChange={(e) => setEditing({ ...editing, amount: e.target.value })}
+                      type="text"
+                      value={editing.description}
+                      onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+                      placeholder="描述"
                     />
                   </div>
+                  <div className="form-row-inline">
+                    <div className="form-row">
+                      <span>金额</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editing.amount}
+                        onChange={(e) => setEditing({ ...editing, amount: e.target.value })}
+                      />
+                    </div>
+                    <div className="form-row">
+                      <span>日期</span>
+                      <input
+                        type="date"
+                        value={editing.date}
+                        onChange={(e) => setEditing({ ...editing, date: e.target.value })}
+                      />
+                    </div>
+                  </div>
                   <div className="form-row">
-                    <span>日期</span>
+                    <span>分类</span>
                     <input
-                      type="date"
-                      value={editing.date}
-                      onChange={(e) => setEditing({ ...editing, date: e.target.value })}
+                      type="text"
+                      value={editing.category}
+                      onChange={(e) => setEditing({ ...editing, category: e.target.value })}
+                      placeholder="如：餐饮、交通"
                     />
                   </div>
-                </div>
-                <div className="form-row">
-                  <span>分类</span>
-                  <input
-                    type="text"
-                    value={editing.category}
-                    onChange={(e) => setEditing({ ...editing, category: e.target.value })}
-                    placeholder="如：餐饮、交通"
-                  />
-                </div>
-                <div className="edit-actions">
-                  <button type="button" onClick={saveEdit} className="btn-primary-sm">保存</button>
-                  <button type="button" onClick={cancelEdit} className="btn-sm">取消</button>
+                  <div className="edit-actions">
+                    <button type="button" onClick={saveEdit} className="btn-primary-sm">保存</button>
+                    <button type="button" onClick={cancelEdit} className="btn-sm">取消</button>
+                  </div>
                 </div>
               </div>
             ) : (
-              <>
-                <div className="tx-main">
-                  <span className="tx-desc">{t.description || t.category}</span>
-                  <span className="tx-meta">
-                    {t.date} · {TYPE_LABEL[t.type]} · {accountName(t.accountId)}
-                    {t.relatedAccountId ? ` → ${accountName(t.relatedAccountId)}` : ''}
-                    {t.estimated && <span className="tag">估算</span>}
+              <SwipeableRow
+                actions={
+                  <>
+                    <button type="button" className="act-edit" onClick={() => startEdit(t)}>编辑</button>
+                    <button type="button" className="act-delete" onClick={() => onDelete(t)}>删除</button>
+                  </>
+                }
+              >
+                <div className="tx-item">
+                  <div className="tx-main">
+                    <span className="tx-desc">{t.description || t.category}</span>
+                    <span className="tx-meta">
+                      {t.date} · {TYPE_LABEL[t.type]} · {accountName(t.accountId)}
+                      {t.relatedAccountId ? ` → ${accountName(t.relatedAccountId)}` : ''}
+                      {t.estimated && <span className="tag">估算</span>}
+                    </span>
+                  </div>
+                  <span className={`tx-amount ${t.type === 'income' || t.type === 'refund' ? 'positive' : 'negative'}`}>
+                    {SIGN[t.type]}¥{formatMoney(t.amount)}
                   </span>
                 </div>
-                <span className={`tx-amount ${t.type === 'income' || t.type === 'refund' ? 'positive' : 'negative'}`}>
-                  {SIGN[t.type]}¥{formatMoney(t.amount)}
-                </span>
-                <div className="tx-actions">
-                  <button type="button" className="btn-sm" onClick={() => startEdit(t)}>
-                    编辑
-                  </button>
-                  <button type="button" className="btn-sm danger" onClick={() => onDelete(t)}>
-                    删除
-                  </button>
-                </div>
-              </>
+              </SwipeableRow>
             )}
           </li>
         ))}

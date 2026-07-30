@@ -5,6 +5,7 @@ import type { Account, AccountMeta, AccountType, RepaymentMethod } from '../core
 import { round2 } from '../core/utils/money';
 import { store } from './appState';
 import { dialog } from './Dialog';
+import { SwipeableRow } from './SwipeableRow';
 
 const TYPE_LABEL: Record<AccountType, string> = {
   wallet: '电子钱包',
@@ -179,58 +180,65 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
       <h2>账户</h2>
       <ul className="account-list">
         {store.state.accounts.map((a) => (
-          <li key={a.id} className="account-item">
+          <li key={a.id}>
             {isEditing(a) ? (
-              <div className="account-edit-form">
-                <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="账户名" aria-label="编辑账户名" />
-                <input value={editBalance} onChange={(e) => setEditBalance(e.target.value)} placeholder="余额" inputMode="decimal" aria-label="编辑余额" />
-                {a.meta?.kind === 'credit' && (
-                  <>
-                    <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="额度" inputMode="decimal" aria-label="编辑额度" />
-                    <input value={editBillDay} onChange={(e) => setEditBillDay(e.target.value)} placeholder="账单日" inputMode="numeric" aria-label="编辑账单日" />
-                    <input value={editDueDay} onChange={(e) => setEditDueDay(e.target.value)} placeholder="还款日" inputMode="numeric" aria-label="编辑还款日" />
-                    <label className="check-row">
-                      <input type="checkbox" checked={editDueNextDay} onChange={(e) => setEditDueNextDay(e.target.checked)} />
-                      <span>还款日在次月</span>
-                    </label>
-                  </>
-                )}
-                {a.meta?.kind === 'installment' && (
-                  <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="总额度" inputMode="decimal" aria-label="编辑总额度" />
-                )}
-                <div className="edit-actions">
-                  <button type="button" className="btn-sm" onClick={() => saveEdit(a)}>保存</button>
-                  <button type="button" className="btn-sm" onClick={() => setEditingId(null)}>取消</button>
+              <div className="account-item">
+                <div className="account-edit-form">
+                  <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="账户名" aria-label="编辑账户名" />
+                  <input value={editBalance} onChange={(e) => setEditBalance(e.target.value)} placeholder="余额" inputMode="decimal" aria-label="编辑余额" />
+                  {a.meta?.kind === 'credit' && (
+                    <>
+                      <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="额度" inputMode="decimal" aria-label="编辑额度" />
+                      <input value={editBillDay} onChange={(e) => setEditBillDay(e.target.value)} placeholder="账单日" inputMode="numeric" aria-label="编辑账单日" />
+                      <input value={editDueDay} onChange={(e) => setEditDueDay(e.target.value)} placeholder="还款日" inputMode="numeric" aria-label="编辑还款日" />
+                      <label className="check-row">
+                        <input type="checkbox" checked={editDueNextDay} onChange={(e) => setEditDueNextDay(e.target.checked)} />
+                        <span>还款日在次月</span>
+                      </label>
+                    </>
+                  )}
+                  {a.meta?.kind === 'installment' && (
+                    <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="总额度" inputMode="decimal" aria-label="编辑总额度" />
+                  )}
+                  <div className="edit-actions">
+                    <button type="button" className="btn-sm" onClick={() => saveEdit(a)}>保存</button>
+                    <button type="button" className="btn-sm" onClick={() => setEditingId(null)}>取消</button>
+                  </div>
+                  {editError && <p className="error-text">{editError}</p>}
                 </div>
-                {editError && <p className="error-text">{editError}</p>}
               </div>
             ) : (
-              <>
-                <div className="account-info">
-                  <strong>{a.name}</strong>
-                  <span className="tag">{TYPE_LABEL[a.type]}</span>
-                  {a.meta?.kind === 'credit' && (
-                    <span className="meta">
-                      额度 ¥{formatMoney(a.meta.limit)} · 账单日 {a.meta.billDay} 号 · 还款日 {a.meta.dueNextMonth ? `次月${a.meta.dueDay}号` : `${a.meta.dueDay} 号`}
+              <SwipeableRow
+                actions={
+                  <>
+                    <button type="button" className="act-edit" onClick={() => startEdit(a)}>编辑</button>
+                    <button type="button" className="act-delete" onClick={() => deleteAccount(a)}>删除</button>
+                  </>
+                }
+              >
+                <div className="account-item">
+                  <div className="account-info">
+                    <strong>{a.name}</strong>
+                    <span className="tag">{TYPE_LABEL[a.type]}</span>
+                    {a.meta?.kind === 'credit' && (
+                      <span className="meta">
+                        额度 ¥{formatMoney(a.meta.limit)} · 账单日 {a.meta.billDay} 号 · 还款日 {a.meta.dueNextMonth ? `次月${a.meta.dueDay}号` : `${a.meta.dueDay} 号`}
+                      </span>
+                    )}
+                    {a.meta?.kind === 'installment' && <span className="meta">总额度 ¥{formatMoney(a.meta.totalLimit)}</span>}
+                    {a.meta?.kind === 'loan' && (
+                      <span className="meta">
+                        月供 ¥{formatMoney(a.meta.monthlyPayment)} · 年利率 {(a.meta.annualRate * 100).toFixed(2)}% · 下期 {a.meta.nextDueDate}
+                      </span>
+                    )}
+                  </div>
+                  <div className="account-right">
+                    <span className={a.type === 'credit' || a.type === 'loan' || a.type === 'installment' ? 'negative' : ''}>
+                      ¥{formatMoney(a.balance)}
                     </span>
-                  )}
-                  {a.meta?.kind === 'installment' && <span className="meta">总额度 ¥{formatMoney(a.meta.totalLimit)}</span>}
-                  {a.meta?.kind === 'loan' && (
-                    <span className="meta">
-                      月供 ¥{formatMoney(a.meta.monthlyPayment)} · 年利率 {(a.meta.annualRate * 100).toFixed(2)}% · 下期 {a.meta.nextDueDate}
-                    </span>
-                  )}
-                </div>
-                <div className="account-right">
-                  <span className={a.type === 'credit' || a.type === 'loan' || a.type === 'installment' ? 'negative' : ''}>
-                    ¥{formatMoney(a.balance)}
-                  </span>
-                  <div className="account-actions">
-                    <button type="button" className="btn-sm" onClick={() => startEdit(a)}>编辑</button>
-                    <button type="button" className="btn-sm danger" onClick={() => deleteAccount(a)}>删除</button>
                   </div>
                 </div>
-              </>
+              </SwipeableRow>
             )}
           </li>
         ))}
