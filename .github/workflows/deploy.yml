@@ -86,6 +86,9 @@ jobs:
           VITE_TRIAL_PROXY_URL: ${{ steps.proxy-url.outputs.url }}
         run: npm run build
 
+      - name: Bundle size guard
+        run: npm run size
+
       # ── 上传构建产物供下游 job 使用 ──
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4

@@ -7,7 +7,6 @@ import { downloadBlob, svgToPng } from './chartExport';
 import { round2 } from '../core/utils/money';
 import { store } from './appState';
 import { TrendChart } from './TrendChart';
-import { useI18n } from '../i18n/useI18n';
 
 function currentMonth(): string {
   const d = new Date();
@@ -22,6 +21,7 @@ function pctLabel(p: number | null): string {
 export function StatsView() {
   const [month, setMonth] = useState(currentMonth());
   const [toast, setToast] = useState('');
+  const [exportingPng, setExportingPng] = useState(false);
   const chartWrapRef = useRef<HTMLDivElement>(null);
   const summary = store.getMonthlySummary(month);
   const cats = store.getCategoryStats(month);
@@ -46,7 +46,6 @@ export function StatsView() {
   const prevSeries = buildCumulative(prevMonth(month));
   const prevTotal = prevSeries.length > 0 ? prevSeries[prevSeries.length - 1].value : 0;
   const anomaly = detectAnomalies(store.state.transactions, { referenceMonth: month });
-  const { t } = useI18n();
 
   const exportCsv = () => {
     const r = buildMonthlyReport(store, month);
@@ -61,18 +60,21 @@ export function StatsView() {
       setToast('图表尚未渲染，无法导出');
       return;
     }
+    setExportingPng(true);
     try {
       const blob = await svgToPng(svg as SVGSVGElement);
       downloadBlob(blob, `支出走势_${month}.png`);
       setToast('已导出趋势图 PNG');
     } catch {
       setToast('导出图片失败');
+    } finally {
+      setExportingPng(false);
     }
   };
 
   return (
     <div className="panel">
-      <h2>{t('stats.title')}</h2>
+      <h2>统计</h2>
       <div className="filter-row">
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="统计月份" />
       </div>
@@ -118,8 +120,10 @@ export function StatsView() {
         <TrendChart current={curSeries} previous={prevSeries} prevTotal={prevTotal} projected={trend.projectedMonthExpense} />
       </div>
       <div className="report-actions">
-        <button type="button" onClick={exportCsv}>{t('stats.exportCsv')}</button>
-        <button type="button" onClick={exportChartPng}>{t('stats.exportPng')}</button>
+        <button type="button" onClick={exportCsv} disabled={exportingPng}>导出月度报表 (CSV)</button>
+        <button type="button" onClick={exportChartPng} disabled={exportingPng}>
+          {exportingPng ? '导出中…' : '导出趋势图 (PNG)'}
+        </button>
       </div>
       {(trend.topRisers.length > 0 || trend.topFallers.length > 0) && (
         <>

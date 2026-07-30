@@ -16,7 +16,6 @@ import { dialog } from './Dialog';
 import { FullscreenModal } from './FullscreenModal';
 import { Icon } from './Icon';
 import { type Agent, getActiveAgent, listAgents, setActiveAgent } from '../core/ai/agents';
-import { useI18n } from '../i18n/useI18n';
 
 interface ChatMessage {
   role: 'user' | 'ai';
@@ -447,10 +446,9 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
 
   const usingBuiltin = isUsingBuiltinConfig();
   const trialReady = isTrialAvailable();
-  const { t } = useI18n();
   const inputPlaceholder = usingBuiltin
-    ? (trialReady ? t('chat.placeholder') : t('chat.placeholderLocal'))
-    : t('chat.placeholder');
+    ? (trialReady ? '输入消息，AI 帮你记账...' : '输入消息，离线也能记账（本地解析，无需联网）...')
+    : '输入消息，AI 帮你记账...';
 
   // 近期流水（首页中间展示）
   const recentTxs = [...store.state.transactions]

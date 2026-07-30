@@ -3,16 +3,25 @@ import { bootstrap } from './ui/appState';
 import { ChatView } from './ui/ChatView';
 import { DialogContainer } from './ui/Dialog';
 import { Icon, type IconName } from './ui/Icon';
-import { LockView } from './ui/LockView';
 import { useStoreVersion } from './ui/useStoreVersion';
 import { isVaultEnabled } from './core/security/vault';
 
 // 非首屏视图懒加载：减小首屏 JS 体积，加速 LCP
+const LockView = lazy(() => import('./ui/LockView').then((m) => ({ default: m.LockView })));
 const AccountsView = lazy(() => import('./ui/AccountsView').then((m) => ({ default: m.AccountsView })));
 const CalendarView = lazy(() => import('./ui/CalendarView').then((m) => ({ default: m.CalendarView })));
 const TxListView = lazy(() => import('./ui/TxListView').then((m) => ({ default: m.TxListView })));
 const StatsView = lazy(() => import('./ui/StatsView').then((m) => ({ default: m.StatsView })));
 const SettingsView = lazy(() => import('./ui/SettingsView').then((m) => ({ default: m.SettingsView })));
+
+/** 懒加载视图的统一 loading 占位：spinner + 文案 */
+function ViewLoading({ label = '加载中…' }: { label?: string }) {
+  return (
+    <div className="view-loading" aria-busy="true" role="status" aria-live="polite">
+      {label}
+    </div>
+  );
+}
 
 type Tab = 'chat' | 'accounts' | 'calendar' | 'txs' | 'stats' | 'settings';
 
@@ -75,7 +84,9 @@ export function App() {
           </div>
         </header>
         <main>
-          <LockView onUnlocked={() => { setUnlocked(true); bump(); }} />
+          <Suspense fallback={<ViewLoading label="加载加密模块…" />}>
+            <LockView onUnlocked={() => { setUnlocked(true); bump(); }} />
+          </Suspense>
         </main>
         <DialogContainer />
       </div>
@@ -91,7 +102,7 @@ export function App() {
         </div>
       </header>
       <main>
-        <Suspense fallback={<div className="view-loading" aria-busy="true" />}>
+        <Suspense fallback={<ViewLoading />}>
           {tab === 'chat' && <ChatView onChanged={bump} onNavigateToSettings={navigateToSettingsAIConfig} />}
           {tab === 'accounts' && <AccountsView onChanged={bump} />}
           {tab === 'calendar' && <CalendarView version={version} />}

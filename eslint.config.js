@@ -44,6 +44,16 @@ export default tseslint.config(
   },
 
   {
+    // Node 构建脚本：使用 node 全局（console/process/Buffer 等）
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+  },
+
+  {
     files: ['**/*.test.{ts,tsx}', 'tests/**/*.{ts,tsx}'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',

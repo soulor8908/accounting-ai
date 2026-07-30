@@ -10,8 +10,6 @@ import { isVaultEnabled, lock } from '../core/security/vault';
 import { chatStore, memoryStore, store } from './appState';
 import { resetChatHistory } from './ChatView';
 import { dialog } from './Dialog';
-import { useI18n } from '../i18n/useI18n';
-import { LANGS } from '../i18n/dict';
 import {
   type Agent,
   addAgent,
@@ -34,10 +32,11 @@ const MEMORY_CATEGORY_LABEL: Record<MemoryCategory, string> = {
 };
 
 export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onLock?: () => void }) {
-  const { lang, setLang, t } = useI18n();
   const fileRef = useRef<HTMLInputElement>(null);
   const encFileRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState('');
+  // 数据导入/导出等异步操作的 busy 态：执行期间禁用全部数据按钮，防重复点击
+  const [dataBusy, setDataBusy] = useState(false);
 
   // AI 配置
   const existing = loadAIConfig() ?? defaultConfig();
@@ -150,6 +149,8 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
   };
 
   const importData = async (file: File) => {
+    setDataBusy(true);
+    setMessage('正在导入…');
     try {
       const parsed: unknown = JSON.parse(await file.text());
       if (!isValidStateShape(parsed)) {
@@ -162,6 +163,8 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
       setMessage('导入成功');
     } catch {
       setMessage('导入失败：无法解析文件');
+    } finally {
+      setDataBusy(false);
     }
   };
 
@@ -178,6 +181,8 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
       setMessage('口令过弱：至少8位且含字母和数字');
       return;
     }
+    setDataBusy(true);
+    setMessage('正在加密导出…');
     try {
       const json = await createBackup(pw);
       const blob = new Blob([json], { type: 'application/json' });
@@ -191,22 +196,35 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
       dialog.toast('已导出加密备份', 'success');
     } catch {
       setMessage('导出失败');
+    } finally {
+      setDataBusy(false);
     }
   };
 
   /** 导入加密备份：选文件 → 输入口令 → 还原 */
   const importEncrypted = async (file: File) => {
-    const text = await file.text();
-    const pw = await dialog.prompt('输入备份口令', '', '导出时设置的口令', '导入加密备份');
-    if (!pw) return;
-    const ok = await restoreBackup(text, pw);
-    if (ok) {
-      onChanged();
-      setMessage('加密备份已还原');
-      dialog.toast('加密备份已还原', 'success');
-    } else {
-      setMessage('还原失败：口令错误或文件已损坏');
-      dialog.toast('还原失败', 'error');
+    setDataBusy(true);
+    setMessage('正在还原…');
+    try {
+      const text = await file.text();
+      const pw = await dialog.prompt('输入备份口令', '', '导出时设置的口令', '导入加密备份');
+      if (!pw) {
+        setMessage('');
+        return;
+      }
+      const ok = await restoreBackup(text, pw);
+      if (ok) {
+        onChanged();
+        setMessage('加密备份已还原');
+        dialog.toast('加密备份已还原', 'success');
+      } else {
+        setMessage('还原失败：口令错误或文件已损坏');
+        dialog.toast('还原失败', 'error');
+      }
+    } catch {
+      setMessage('还原失败：文件已损坏');
+    } finally {
+      setDataBusy(false);
     }
   };
 
@@ -350,21 +368,9 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
 
   return (
     <div className="panel">
-      <h2>{t('settings.title')}</h2>
+      <h2>设置</h2>
 
-      <h3>{t('settings.language')}</h3>
-      <label className="form-row">
-        <span>语言</span>
-        <select value={lang} onChange={(e) => setLang(e.target.value as 'zh' | 'en')}>
-          {LANGS.map((l) => (
-            <option key={l.value} value={l.value}>
-              {l.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <h3 id="ai-config-section">{t('settings.ai')}</h3>
+      <h3 id="ai-config-section">AI 助手配置</h3>
       <form className="ai-config-form" onSubmit={onAISubmit}>
         <label className="form-row">
           <span>AI 服务商</span>
@@ -581,13 +587,13 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
         ))}
       </ul>
 
-      <h3>{t('settings.data')}</h3>
+      <h3>数据管理</h3>
       <div className="settings-actions">
-        <button type="button" onClick={exportData}>
+        <button type="button" onClick={exportData} disabled={dataBusy}>
           导出 JSON 备份
         </button>
-        <button type="button" onClick={() => fileRef.current?.click()}>
-          导入备份
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={dataBusy}>
+          {dataBusy ? '处理中…' : '导入备份'}
         </button>
         <input
           ref={fileRef}
@@ -600,11 +606,11 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
             e.target.value = '';
           }}
         />
-        <button type="button" onClick={exportEncrypted}>
-          导出加密备份
+        <button type="button" onClick={exportEncrypted} disabled={dataBusy}>
+          {dataBusy ? '处理中…' : '导出加密备份'}
         </button>
-        <button type="button" onClick={() => encFileRef.current?.click()}>
-          导入加密备份
+        <button type="button" onClick={() => encFileRef.current?.click()} disabled={dataBusy}>
+          {dataBusy ? '处理中…' : '导入加密备份'}
         </button>
         <input
           ref={encFileRef}
@@ -617,10 +623,10 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
             e.target.value = '';
           }}
         />
-        <button type="button" className="danger" onClick={clearAllChats}>
+        <button type="button" className="danger" onClick={clearAllChats} disabled={dataBusy}>
           清空聊天记录
         </button>
-        <button type="button" className="danger" onClick={clearAll}>
+        <button type="button" className="danger" onClick={clearAll} disabled={dataBusy}>
           清空全部数据
         </button>
       </div>

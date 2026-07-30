@@ -31,3 +31,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Bundle size guard
+        run: npm run size
