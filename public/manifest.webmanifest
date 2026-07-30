@@ -1,0 +1,14 @@
+{
+  "name": "智能记账AI助手",
+  "short_name": "记账AI",
+  "description": "一句话完成记账的本地优先 AI 记账助手",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f2ea",
+  "theme_color": "#17604d",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -10,6 +10,8 @@ import { isVaultEnabled, lock } from '../core/security/vault';
 import { chatStore, memoryStore, store } from './appState';
 import { resetChatHistory } from './ChatView';
 import { dialog } from './Dialog';
+import { useI18n } from '../i18n/useI18n';
+import { LANGS } from '../i18n/dict';
 import {
   type Agent,
   addAgent,
@@ -32,6 +34,7 @@ const MEMORY_CATEGORY_LABEL: Record<MemoryCategory, string> = {
 };
 
 export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onLock?: () => void }) {
+  const { lang, setLang, t } = useI18n();
   const fileRef = useRef<HTMLInputElement>(null);
   const encFileRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState('');
@@ -347,9 +350,21 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
 
   return (
     <div className="panel">
-      <h2>设置</h2>
+      <h2>{t('settings.title')}</h2>
 
-      <h3 id="ai-config-section">AI 助手配置</h3>
+      <h3>{t('settings.language')}</h3>
+      <label className="form-row">
+        <span>语言</span>
+        <select value={lang} onChange={(e) => setLang(e.target.value as 'zh' | 'en')}>
+          {LANGS.map((l) => (
+            <option key={l.value} value={l.value}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <h3 id="ai-config-section">{t('settings.ai')}</h3>
       <form className="ai-config-form" onSubmit={onAISubmit}>
         <label className="form-row">
           <span>AI 服务商</span>
@@ -566,7 +581,7 @@ export function SettingsView({ onChanged, onLock }: { onChanged: () => void; onL
         ))}
       </ul>
 
-      <h3>数据管理</h3>
+      <h3>{t('settings.data')}</h3>
       <div className="settings-actions">
         <button type="button" onClick={exportData}>
           导出 JSON 备份

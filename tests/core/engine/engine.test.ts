@@ -126,11 +126,13 @@ describe('转账', () => {
     expect(wechat.balance).toBe(3500);
   });
 
-  it('目标账户不存在 → 报错并列出现有账户', () => {
+  it('目标账户缺失/未知 → 改为澄清并列出可选账户 (P1-4)', () => {
     const { engine } = setup(true);
     const r = engine.handle('从招行储蓄卡转了500到不存在账户');
-    expect(r.status).toBe('error');
+    // P1-4 歧义消解：未解析到目标账户时不再直接报错，而是澄清让用户从现有账户中选择
+    expect(r.status).toBe('clarify');
     expect(r.message).toContain('账户');
+    expect(r.clarifyOptions?.length ?? 0).toBeGreaterThan(0);
   });
 });
 

@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { type EngineResult, formatMoney } from '../core/engine/engine';
 import { getEffectiveConfig, isTrialAvailable, isUsingBuiltinConfig } from '../core/ai/config';
-import { DAILY_TRIAL_LIMIT, getTrialRemaining, hasTrialQuota, recordTrialUsage } from '../core/ai/trialQuota';
+import { getDailyTrialLimit, getTrialRemaining, hasTrialQuota, recordTrialUsage } from '../core/ai/trialQuota';
 import type { ChatMessage as AIMessage } from '../core/ai/client';
 import { extractHabit } from '../core/ai/habits';
 import type { Account, Transaction } from '../core/types';
@@ -16,6 +16,7 @@ import { dialog } from './Dialog';
 import { FullscreenModal } from './FullscreenModal';
 import { Icon } from './Icon';
 import { type Agent, getActiveAgent, listAgents, setActiveAgent } from '../core/ai/agents';
+import { useI18n } from '../i18n/useI18n';
 
 interface ChatMessage {
   role: 'user' | 'ai';
@@ -229,7 +230,7 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
 
     // 试用用户每日配额检查（用户配置了自己的 API Key 后不受限）
     if (isUsingBuiltinConfig() && !hasTrialQuota()) {
-      pushAI(`今日试用次数已用完（每天 ${DAILY_TRIAL_LIMIT} 次），请明天再试或在设置中配置自己的 API Key。`, 'error');
+      pushAI(`今日试用次数已用完（每天 ${getDailyTrialLimit()} 次），请明天再试或在设置中配置自己的 API Key。`, 'error');
       return;
     }
 
@@ -446,11 +447,10 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
 
   const usingBuiltin = isUsingBuiltinConfig();
   const trialReady = isTrialAvailable();
+  const { t } = useI18n();
   const inputPlaceholder = usingBuiltin
-    ? (trialReady
-        ? '输入消息，AI 帮你记账（试用中）...'
-        : '输入消息，离线也能记账（本地解析，无需联网）...')
-    : '输入消息，AI 帮你记账...';
+    ? (trialReady ? t('chat.placeholder') : t('chat.placeholderLocal'))
+    : t('chat.placeholder');
 
   // 近期流水（首页中间展示）
   const recentTxs = [...store.state.transactions]
@@ -702,7 +702,7 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
                 <span className="trial-banner-link">去配置 ›</span>
               </span>
               <span className="trial-banner-quota">
-                今日剩余 {isUsingBuiltinConfig() ? getTrialRemaining() : DAILY_TRIAL_LIMIT}/{DAILY_TRIAL_LIMIT}
+                今日剩余 {isUsingBuiltinConfig() ? getTrialRemaining() : getDailyTrialLimit()}/{getDailyTrialLimit()}
               </span>
             </button>
           )}

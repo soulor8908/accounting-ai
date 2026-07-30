@@ -35,6 +35,8 @@ export function formatMoney(n: number): string {
 type Pending =
   | { kind: 'amount'; intent: Intent; clarifyUsed: boolean; allowEstimate: boolean }
   | { kind: 'account'; intent: Intent; clarifyUsed: boolean }
+  | { kind: 'debt'; intent: Intent; clarifyUsed: boolean }
+  | { kind: 'transferTarget'; intent: Intent; clarifyUsed: boolean }
   | { kind: 'execute'; intent: Intent; clarifyUsed: boolean };
 
 const CONFIRM_WORDS = /^(对|是的|是|嗯|好|好的|确认|可以|行)$/;
@@ -101,14 +103,40 @@ export class Engine {
       return { status: 'clarify', message: '没听清金额，请回复具体数字（如 350）' };
     }
 
-    // kind === 'account'
-    const matches = this.store.resolveAccounts(input);
-    if (matches.length === 0) {
+    if (p.kind === 'account') {
+      const matches = this.store.resolveAccounts(input);
+      if (matches.length === 0) {
+        this.pending = null;
+        return { status: 'error', message: `没找到账户「${input}」。${this.accountListHint()}` };
+      }
       this.pending = null;
-      return { status: 'error', message: `没找到账户「${input}」。${this.accountListHint()}` };
+      return this.execute(this.withAccountHint(p.intent, matches[0].name), { clarifyUsed: true, forceConfirm: false });
     }
+
+    // 还款目标账户二义（多张同类信用卡 / 多个负债账户）
+    if (p.kind === 'debt') {
+      const acc = this.store.resolveAccounts(input)[0];
+      if (!acc) {
+        this.pending = null;
+        return { status: 'error', message: `没找到账户「${input}」。${this.accountListHint()}` };
+      }
+      this.pending = null;
+      return this.execute({ ...p.intent, targetHint: acc.name } as Intent, { clarifyUsed: true, forceConfirm: false });
+    }
+
+    // 转账目标账户缺失
+    if (p.kind === 'transferTarget') {
+      const acc = this.store.resolveAccounts(input)[0];
+      if (!acc) {
+        this.pending = null;
+        return { status: 'error', message: `没找到目标账户「${input}」。${this.accountListHint()}` };
+      }
+      this.pending = null;
+      return this.execute({ ...p.intent, toHint: acc.name } as Intent, { clarifyUsed: true, forceConfirm: false });
+    }
+
     this.pending = null;
-    return this.execute(this.withAccountHint(p.intent, matches[0].name), { clarifyUsed: true, forceConfirm: false });
+    return { status: 'error', message: '操作已取消或信息不完整' };
   }
 
   private withAmount(intent: Intent, value: number): Intent {
@@ -203,8 +231,14 @@ export class Engine {
     if (!from) {
       return { status: 'error', message: `没找到转出账户${intent.fromHint ? `「${intent.fromHint}」` : ''}。${this.accountListHint()}` };
     }
-    const to = this.store.resolveAccounts(intent.toHint)[0];
+    const to = intent.toHint ? this.store.resolveAccounts(intent.toHint)[0] : undefined;
     if (!to) {
+      if (!ctx.clarifyUsed) {
+        const accounts = this.store.state.accounts;
+        if (accounts.length === 0) return { status: 'error', message: '还没有任何账户，请先创建账户' };
+        this.pending = { kind: 'transferTarget', intent, clarifyUsed: false };
+        return { status: 'clarify', message: '转到哪个账户？', clarifyOptions: accounts.map((a) => a.name) };
+      }
       return { status: 'error', message: `没找到目标账户「${intent.toHint}」。${this.accountListHint()}` };
     }
     if (from.id === to.id) {
@@ -235,10 +269,15 @@ export class Engine {
       this.pending = { kind: 'amount', intent, clarifyUsed: ctx.clarifyUsed, allowEstimate: false };
       return { status: 'clarify', message: `还了多少？请回复金额（如 2000）` };
     }
-    const target = this.findDebtAccount(intent.targetHint);
-    if (!target) {
+    const candidates = this.candidateDebtAccounts(intent.targetHint);
+    if (candidates.length === 0) {
       return { status: 'error', message: `没有找到对应的负债账户（${intent.targetHint ?? '欠款'}）。${this.accountListHint()}` };
     }
+    if (candidates.length > 1 && !ctx.clarifyUsed) {
+      this.pending = { kind: 'debt', intent, clarifyUsed: false };
+      return { status: 'clarify', message: '还到哪个账户？', clarifyOptions: candidates.map((a) => a.name) };
+    }
+    const target = candidates[0];
     // "还了信用卡2000"中的"信用卡"是还款目标，不是付款账户
     const hint = intent.accountHint && !REPAY_TARGET_WORDS.test(intent.accountHint) ? intent.accountHint : undefined;
     const picked = this.pickAssetAccount(hint, ctx.clarifyUsed, intent, 'richest');
@@ -458,6 +497,24 @@ export class Engine {
       }
     }
     return byType(['credit', 'installment', 'loan'])[0];
+  }
+
+  /**
+   * 候选负债账户：供还款目标二义时追问。
+   * - 给了 targetHint：先按名称解析；无命中则按关键词类型（信用卡/白条花呗/房贷车贷）过滤
+   * - 无 targetHint：返回全部负债账户（多张同类卡时需追问）
+   */
+  private candidateDebtAccounts(targetHint?: string): Account[] {
+    const accounts = this.store.state.accounts;
+    const debtTypes: AccountType[] = ['credit', 'installment', 'loan'];
+    if (targetHint) {
+      const byName = this.store.resolveAccounts(targetHint).filter((a) => debtTypes.includes(a.type));
+      if (byName.length > 0) return byName;
+      if (/信用卡/.test(targetHint)) return accounts.filter((a) => a.type === 'credit');
+      if (/白条|花呗/.test(targetHint)) return accounts.filter((a) => a.type === 'installment');
+      if (/房贷|车贷|贷款|借款|欠款/.test(targetHint)) return accounts.filter((a) => a.type === 'loan');
+    }
+    return accounts.filter((a) => debtTypes.includes(a.type));
   }
 
   /** 分期负债账户：hint 命中的信用/分期账户，否则第一个信用账户 */

@@ -3194,3 +3194,28 @@ input[type="month"]:focus {
   flex-shrink: 0;
 }
 
+/* 统计页：报表导出按钮组（P2 报表导出） */
+.report-actions {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 4px;
+  flex-wrap: wrap;
+}
+.report-actions button {
+  flex: 1 1 auto;
+  min-width: 140px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-warm);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+.report-actions button:hover {
+  border-color: var(--pine);
+}
+.report-actions button:active {
+  transform: scale(0.98);
+}
+

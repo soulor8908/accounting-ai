@@ -36,6 +36,14 @@ export default tseslint.config(
   },
 
   {
+    files: ['public/sw.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: { ...globals.serviceworker },
+    },
+  },
+
+  {
     files: ['**/*.test.{ts,tsx}', 'tests/**/*.{ts,tsx}'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',

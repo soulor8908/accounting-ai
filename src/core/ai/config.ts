@@ -19,6 +19,7 @@ import {
   isVaultEnabled,
   persistAIConfigJson,
 } from '../security/vault';
+import { getRuntimeConfig } from '../config/runtime';
 
 export interface AIProviderPreset {
   id: string;
@@ -64,21 +65,23 @@ export const AI_PROVIDERS: AIProviderPreset[] = [
  *
  * 安全说明（P0 修复）：
  * - API Key 不再硬编码在前端，而是存于 Cloudflare Worker Secret。
- * - 前端通过 proxyUrl 指向 Worker（构建时注入 VITE_TRIAL_PROXY_URL）。
- * - Worker 负责：注入 Key、按 IP 限流（30 次/分钟）、转发到上游 API。
- * - 若 VITE_TRIAL_PROXY_URL 未配置，试用不可用，用户需自行绑定 Key。
+ * - 前端通过 proxyUrl 指向 Worker（构建时注入 VITE_TRIAL_PROXY_URL，或部署期 /app.config.json 覆盖）。
+ * - Worker 负责：注入 Key、按 IP 限流、转发到上游 API。
+ * - 若 Worker URL 未配置，试用不可用，用户需自行绑定 Key。
  *
- * 切换默认模型：只需修改此常量的 model 字段。
+ * 切换默认模型/代理：改 VITE_DEFAULT_MODEL / VITE_TRIAL_PROXY_URL，或部署期 /app.config.json，
+ * 无需重新构建。
  */
-const TRIAL_PROXY_URL = import.meta.env.VITE_TRIAL_PROXY_URL ?? '';
-
-export const BUILTIN_AI_CONFIG: AIConfig = {
-  providerId: 'agnes',
-  apiKey: '',
-  baseUrl: 'https://apihub.agnes-ai.com',
-  model: 'agnes-2.0-flash',
-  proxyUrl: TRIAL_PROXY_URL || undefined,
-};
+export function getBuiltinConfig(): AIConfig {
+  const rt = getRuntimeConfig();
+  return {
+    providerId: 'agnes',
+    apiKey: '',
+    baseUrl: 'https://apihub.agnes-ai.com',
+    model: rt.defaultModel || 'agnes-2.0-flash',
+    proxyUrl: rt.trialProxyUrl || undefined,
+  };
+}
 
 /**
  * 获取生效的 AI 配置：
@@ -88,7 +91,7 @@ export const BUILTIN_AI_CONFIG: AIConfig = {
 export function getEffectiveConfig(): AIConfig {
   const user = loadAIConfig();
   if (user && (user.apiKey.trim() || user.proxyUrl)) return user;
-  return BUILTIN_AI_CONFIG;
+  return getBuiltinConfig();
 }
 
 /** 判断当前是否使用内置试用配置（非用户自定义） */
@@ -99,7 +102,7 @@ export function isUsingBuiltinConfig(): boolean {
 
 /** 试用代理是否可用（Worker URL 已配置） */
 export function isTrialAvailable(): boolean {
-  return !!TRIAL_PROXY_URL;
+  return !!getRuntimeConfig().trialProxyUrl;
 }
 
 export interface AIConfig {

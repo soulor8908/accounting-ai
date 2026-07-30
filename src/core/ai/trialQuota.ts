@@ -2,14 +2,22 @@
  * 试用用户每日 AI 调用配额
  *
  * 设计（卡帕西视角）：
- * - 试用用户（未配置自定义 API Key）每天可调用 AI 30 次
+ * - 试用用户（未配置自定义 API Key）每天可调用 AI（默认 30）次
  * - 计数存储在 localStorage，按日期重置（自然日，非滚动 24h）
  * - 用户配置自己的 API Key 后不受此限制
- * - 这是前端配额，与 Worker 的 IP 限流（30次/分钟，防刷）互不干扰
+ * - 这是前端配额，与 Worker 的 IP 限流（防刷）互不干扰
+ * - 上限可被部署期 /app.config.json 或 VITE_DAILY_TRIAL_LIMIT 覆盖（P1-3）
  */
 
-/** 每日试用 AI 调用上限 */
-export const DAILY_TRIAL_LIMIT = 30;
+import { getRuntimeConfig } from '../config/runtime';
+
+/** 每日试用 AI 调用上限的默认值 */
+export const DEFAULT_DAILY_TRIAL_LIMIT = 30;
+
+/** 当前生效的每日试用上限（部署期可覆盖，无需重建） */
+export function getDailyTrialLimit(): number {
+  return getRuntimeConfig().dailyTrialLimit ?? DEFAULT_DAILY_TRIAL_LIMIT;
+}
 
 const STORAGE_KEY = 'ai-ledger-trial-quota';
 
@@ -60,12 +68,12 @@ export function getTrialUsage(): number {
 
 /** 获取今日剩余次数 */
 export function getTrialRemaining(): number {
-  return Math.max(0, DAILY_TRIAL_LIMIT - readRecord().count);
+  return Math.max(0, getDailyTrialLimit() - readRecord().count);
 }
 
 /** 判断是否还有试用额度 */
 export function hasTrialQuota(): boolean {
-  return readRecord().count < DAILY_TRIAL_LIMIT;
+  return readRecord().count < getDailyTrialLimit();
 }
 
 /** 记录一次调用（计数 +1），返回更新后的剩余次数 */
@@ -73,7 +81,7 @@ export function recordTrialUsage(): number {
   const rec = readRecord();
   rec.count += 1;
   writeRecord(rec);
-  return Math.max(0, DAILY_TRIAL_LIMIT - rec.count);
+  return Math.max(0, getDailyTrialLimit() - rec.count);
 }
 
 /** 测试用：重置配额 */

@@ -60,15 +60,16 @@ export class KVRateStore implements RateStore {
   }
 }
 
-/** 检查并累加某 IP 的计数；返回是否超限与当前计数 */
+/** 检查并累加某 IP 的计数；返回是否超限与当前计数。perMin 可被部署环境变量覆盖（P1-3） */
 export async function checkRateLimit(
   store: RateStore,
   ip: string,
   now: number = Date.now(),
+  perMin: number = RATE_LIMIT_PER_MIN,
 ): Promise<{ exceeded: boolean; count: number }> {
   const entry = await store.get(ip);
   if (entry && entry.expiresAt > now) {
-    if (entry.count >= RATE_LIMIT_PER_MIN) {
+    if (entry.count >= perMin) {
       return { exceeded: true, count: entry.count };
     }
     const next = { count: entry.count + 1, expiresAt: entry.expiresAt };

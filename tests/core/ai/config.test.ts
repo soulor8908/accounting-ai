@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AI_PROVIDERS,
-  BUILTIN_AI_CONFIG,
   type AIConfig,
   clearAIConfig,
   defaultConfig,
+  getBuiltinConfig,
   getEffectiveConfig,
   isUsingBuiltinConfig,
   loadAIConfig,
@@ -127,7 +127,7 @@ describe('AI config', () => {
   });
 });
 
-describe('内置试用配置 (BUILTIN_AI_CONFIG)', () => {
+describe('内置试用配置 (getBuiltinConfig)', () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -136,12 +136,13 @@ describe('内置试用配置 (BUILTIN_AI_CONFIG)', () => {
     localStorage.clear();
   });
 
-  it('BUILTIN_AI_CONFIG 包含 agnes 配置且不含明文 apiKey', () => {
-    expect(BUILTIN_AI_CONFIG.providerId).toBe('agnes');
+  it('getBuiltinConfig 包含 agnes 配置且不含明文 apiKey', () => {
+    const builtin = getBuiltinConfig();
+    expect(builtin.providerId).toBe('agnes');
     // P0 安全修复：apiKey 不再硬编码在前端
-    expect(BUILTIN_AI_CONFIG.apiKey).toBe('');
-    expect(BUILTIN_AI_CONFIG.baseUrl).toBe('https://apihub.agnes-ai.com');
-    expect(BUILTIN_AI_CONFIG.model).toBe('agnes-2.0-flash');
+    expect(builtin.apiKey).toBe('');
+    expect(builtin.baseUrl).toBe('https://apihub.agnes-ai.com');
+    expect(builtin.model).toBe('agnes-2.0-flash');
   });
 
   it('AI_PROVIDERS 首个预设为 agnes（默认试用）', () => {

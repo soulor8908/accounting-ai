@@ -24,7 +24,7 @@ export type Intent =
       kind: 'transfer';
       amount: AmountMatch;
       fromHint?: string;
-      toHint: string;
+      toHint?: string;
       date: string;
       time?: string;
       description: string;
@@ -190,8 +190,8 @@ export function parse(text: string, now: Date): Intent {
   // 转账：从X转...到Y / 转...到Y
   const t1 = /从(.{1,10}?)转(?:了)?/.exec(input);
   const t2 = /转(?:了|账)?.{0,12}?(?:到|给)(.{1,10}?)(?:[，,。 ]|$)/.exec(input);
-  if ((t1 || /转/.test(input)) && t2 && amount) {
-    const toHint = t2[1].replace(/[，,。]$/, '');
+  if ((t1 || /转/.test(input)) && amount) {
+    const toHint = t2 ? t2[1].replace(/[，,。]$/, '') : undefined;
     const fromHint = t1 ? t1[1] : undefined;
     return {
       kind: 'transfer',
@@ -225,8 +225,11 @@ export function parse(text: string, now: Date): Intent {
     }
   }
 
-  // 还款：含“还”且出现还款目标关键词（排除“还有/还剩”等查询场景）
-  if (/还/.test(input) && !/还有|还剩/.test(input) && REPAY_TARGET.test(input)) {
+  // 还款：含“还”且出现还款目标关键词；或「还/还款/偿还 + 数字」（如「还500」，目标账户待追问）
+  const isRepay =
+    (/还/.test(input) && !/还有|还剩/.test(input) && REPAY_TARGET.test(input)) ||
+    /^(?:还|还款|偿还)\s*了?\s*\d/.test(input);
+  if (isRepay) {
     const target = REPAY_TARGET.exec(input)?.[1];
     return {
       kind: 'repayment',

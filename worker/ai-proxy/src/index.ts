@@ -38,6 +38,8 @@ interface Env {
   AGNES_API_KEY: string;
   /** 可选：绑定后限流计数跨 isolate 一致 */
   RATE_LIMIT_KV?: KVNamespace;
+  /** 可选：每分钟限流上限（覆盖默认 30），部署时通过 wrangler.toml [vars] 配置 */
+  RATE_LIMIT_PER_MIN?: string;
 }
 
 export default {
@@ -51,15 +53,18 @@ export default {
       return json({ error: 'Method not allowed' }, 405);
     }
 
+    // 限流阈值：部署环境变量优先，否则用常量默认（P1-3 部署参数化）
+    const perMin = Number(env.RATE_LIMIT_PER_MIN) || RATE_LIMIT_PER_MIN;
+
     // 限流检查（绑定 KV 则走跨 isolate 一致计数，否则内存计数）
     const clientIP = getClientIP(request);
     const store: RateStore = env.RATE_LIMIT_KV ? new KVRateStore(env.RATE_LIMIT_KV) : memoryRateStore;
-    const rateResult = await checkRateLimit(store, clientIP);
+    const rateResult = await checkRateLimit(store, clientIP, Date.now(), perMin);
     if (rateResult.exceeded) {
       return json(
-        { error: { message: `请求过于频繁，每分钟限 ${RATE_LIMIT_PER_MIN} 次，请稍后再试` } },
+        { error: { message: `请求过于频繁，每分钟限 ${perMin} 次，请稍后再试` } },
         429,
-        { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Limit': String(RATE_LIMIT_PER_MIN) },
+        { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Limit': String(perMin) },
       );
     }
 
@@ -97,8 +102,8 @@ export default {
     const ct = upstream.headers.get('content-type');
     if (ct) respHeaders.set('Content-Type', ct);
     // 限流信息回传，方便前端展示
-    respHeaders.set('X-RateLimit-Limit', String(RATE_LIMIT_PER_MIN));
-    respHeaders.set('X-RateLimit-Remaining', String(Math.max(0, RATE_LIMIT_PER_MIN - rateResult.count)));
+    respHeaders.set('X-RateLimit-Limit', String(perMin));
+    respHeaders.set('X-RateLimit-Remaining', String(Math.max(0, perMin - rateResult.count)));
     respHeaders.set('Access-Control-Allow-Origin', '*');
 
     return new Response(upstream.body, {

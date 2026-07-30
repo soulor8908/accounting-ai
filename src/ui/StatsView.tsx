@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
 import { analyzeTrends, prevMonth } from '../core/analytics/trends';
 import { detectAnomalies } from '../core/analytics/anomaly';
+import { buildMonthlyReport, reportToCsv } from '../core/analytics/export';
+import { downloadBlob, svgToPng } from './chartExport';
 import { round2 } from '../core/utils/money';
 import { store } from './appState';
 import { TrendChart } from './TrendChart';
+import { useI18n } from '../i18n/useI18n';
 
 function currentMonth(): string {
   const d = new Date();
@@ -18,6 +21,8 @@ function pctLabel(p: number | null): string {
 
 export function StatsView() {
   const [month, setMonth] = useState(currentMonth());
+  const [toast, setToast] = useState('');
+  const chartWrapRef = useRef<HTMLDivElement>(null);
   const summary = store.getMonthlySummary(month);
   const cats = store.getCategoryStats(month);
   const maxCat = cats[0]?.amount ?? 0;
@@ -41,10 +46,33 @@ export function StatsView() {
   const prevSeries = buildCumulative(prevMonth(month));
   const prevTotal = prevSeries.length > 0 ? prevSeries[prevSeries.length - 1].value : 0;
   const anomaly = detectAnomalies(store.state.transactions, { referenceMonth: month });
+  const { t } = useI18n();
+
+  const exportCsv = () => {
+    const r = buildMonthlyReport(store, month);
+    const csv = reportToCsv(r);
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `记账报表_${month}.csv`);
+    setToast('已导出月度报表 CSV');
+  };
+
+  const exportChartPng = async () => {
+    const svg = chartWrapRef.current?.querySelector('svg');
+    if (!svg) {
+      setToast('图表尚未渲染，无法导出');
+      return;
+    }
+    try {
+      const blob = await svgToPng(svg as SVGSVGElement);
+      downloadBlob(blob, `支出走势_${month}.png`);
+      setToast('已导出趋势图 PNG');
+    } catch {
+      setToast('导出图片失败');
+    }
+  };
 
   return (
     <div className="panel">
-      <h2>统计</h2>
+      <h2>{t('stats.title')}</h2>
       <div className="filter-row">
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="统计月份" />
       </div>
@@ -86,7 +114,13 @@ export function StatsView() {
         </div>
       </div>
       <h3>支出走势</h3>
-      <TrendChart current={curSeries} previous={prevSeries} prevTotal={prevTotal} projected={trend.projectedMonthExpense} />
+      <div ref={chartWrapRef}>
+        <TrendChart current={curSeries} previous={prevSeries} prevTotal={prevTotal} projected={trend.projectedMonthExpense} />
+      </div>
+      <div className="report-actions">
+        <button type="button" onClick={exportCsv}>{t('stats.exportCsv')}</button>
+        <button type="button" onClick={exportChartPng}>{t('stats.exportPng')}</button>
+      </div>
       {(trend.topRisers.length > 0 || trend.topFallers.length > 0) && (
         <>
           <h3>分类涨跌（对比上月）</h3>
@@ -153,6 +187,7 @@ export function StatsView() {
           </span>
         </li>
       </ul>
+      {toast && <p className="info-text">{toast}</p>}
     </div>
   );
 }

@@ -1,0 +1,6 @@
+{
+  "trialProxyUrl": "https://ai-proxy.your-domain.workers.dev",
+  "defaultModel": "agnes-2.0-flash",
+  "dailyTrialLimit": 30,
+  "appName": "智能记账AI助手"
+}

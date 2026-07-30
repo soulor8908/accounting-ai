@@ -33,4 +33,16 @@ describe('限流 checkRateLimit（P0-3）', () => {
     const b = await checkRateLimit(store, 'b', 1000);
     expect(b.count).toBe(1);
   });
+
+  it('perMin 参数可覆盖默认上限（P1-3 部署参数化）', async () => {
+    const store = new MemoryRateStore();
+    const now = 2_000_000;
+    const res1 = await checkRateLimit(store, '5.5.5.5', now, 2);
+    const res2 = await checkRateLimit(store, '5.5.5.5', now, 2);
+    expect(res2.count).toBe(2);
+    const res3 = await checkRateLimit(store, '5.5.5.5', now, 2);
+    expect(res3.exceeded).toBe(true);
+    expect(res3.count).toBe(2);
+    expect(res1.exceeded).toBe(false);
+  });
 });
