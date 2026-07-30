@@ -14,7 +14,7 @@ function seed() {
 }
 
 describe('AI tools 定义', () => {
-  it('包含 14 个工具', () => {
+  it('包含 15 个工具', () => {
     const names = AI_TOOLS.map((t) => t.function.name);
     expect(names).toEqual([
       'add_transaction',
@@ -24,6 +24,7 @@ describe('AI tools 定义', () => {
       'query_balance',
       'query_summary',
       'query_overview',
+      'analyze_trends',
       'query_upcoming_payments',
       'add_account',
       'list_accounts',
@@ -339,5 +340,25 @@ describe('executeTool - 记忆工具', () => {
     const r = executeTool({ name: 'delete_memory', arguments: { keyword: '微信', confirm: true } });
     expect(r.success).toBe(true);
     expect(memoryStore.list()).toHaveLength(0);
+  });
+});
+
+describe('executeTool - analyze_trends', () => {
+  beforeEach(seed);
+
+  it('返回结构化趋势报告', () => {
+    const acc = store.state.accounts[0];
+    store.applyTransaction({ type: 'expense', amount: 600, accountId: acc.id, category: '餐饮', description: '上月', date: '2026-05-04' }, { confirm: true });
+    store.applyTransaction({ type: 'expense', amount: 900, accountId: acc.id, category: '餐饮', description: '本月', date: '2026-06-10' }, { confirm: true });
+    const r = executeTool({ name: 'analyze_trends', arguments: {} });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('【消费趋势');
+    expect(r.result).toContain('餐饮');
+  });
+
+  it('month 格式错误时返回失败', () => {
+    const r = executeTool({ name: 'analyze_trends', arguments: { month: '2026/06' } });
+    expect(r.success).toBe(false);
+    expect(r.result).toContain('YYYY-MM');
   });
 });

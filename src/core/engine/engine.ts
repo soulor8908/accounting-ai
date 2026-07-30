@@ -6,6 +6,7 @@
 import { type AmountMatch, extractAmount } from '../parser/amount';
 import { formatDate } from '../parser/dateParser';
 import { type Intent, parse } from '../parser/parser';
+import { analyzeTrends, formatTrendReport } from '../analytics/trends';
 import { addMonthsClamped } from '../finance/loan';
 import { Store, ValidationError } from '../store/store';
 import type { Account, AccountType, Transaction } from '../types';
@@ -137,6 +138,8 @@ export class Engine {
         return this.executeQueryBalance(intent.accountHint);
       case 'query_summary':
         return this.executeQuerySummary(intent.scope);
+      case 'analyze_trend':
+        return this.executeAnalyzeTrend();
       case 'expense':
       case 'income':
         return this.executeBasic(intent, ctx);
@@ -341,6 +344,11 @@ export class Engine {
     if (assets.length === 0) return { status: 'error', message: '还没有资产账户，请先创建' };
     const lines = assets.map((a) => `「${a.name}」¥${formatMoney(a.balance)}`);
     return { status: 'ok', message: `${lines.join('，')}；总资产 ¥${formatMoney(this.store.getTotalAssets())}` };
+  }
+
+  private executeAnalyzeTrend(): EngineResult {
+    const report = analyzeTrends(this.store.state.transactions, { now: this.now() });
+    return { status: 'ok', message: formatTrendReport(report) };
   }
 
   private executeQuerySummary(scope: 'today' | 'month'): EngineResult {

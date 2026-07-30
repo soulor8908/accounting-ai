@@ -61,6 +61,7 @@ export type Intent =
     }
   | { kind: 'query_balance'; accountHint?: string }
   | { kind: 'query_summary'; scope: 'today' | 'month' }
+  | { kind: 'analyze_trend' }
   | { kind: 'undo' }
   | { kind: 'unknown'; text: string };
 
@@ -122,6 +123,13 @@ export function parse(text: string, now: Date): Intent {
   // 撤销
   if (/撤销|撤回|取消.{0,4}笔|删掉.{0,4}笔|删除.{0,4}笔/.test(input)) {
     return { kind: 'undo' };
+  }
+
+  // 趋势分析：含 趋势/环比/同比，或「本月比上月/去年」式比较，且无具体金额（否则按支出处理）
+  const trendRe =
+    /趋势|环比|同比|(?:(?:这个月|本月|近期).{0,6}(?:比|对比|相比).{0,8}(?:上个月|上月|去年|往年))|(?:(?:比|跟|和).{0,2}(?:上个月|上月|去年|往年))|(?:分析.{0,4}(?:消费|支出|账|趋势))/;
+  if (trendRe.test(input) && !extractAmount(input)) {
+    return { kind: 'analyze_trend' };
   }
 
   // 查询余额

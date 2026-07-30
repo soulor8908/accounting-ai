@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { formatMoney } from '../core/engine/engine';
+import { analyzeTrends } from '../core/analytics/trends';
 import { store } from './appState';
 
 function currentMonth(): string {
@@ -7,11 +8,17 @@ function currentMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function pctLabel(p: number | null): string {
+  if (p === null) return '—';
+  return `${p > 0 ? '+' : ''}${p}%`;
+}
+
 export function StatsView() {
   const [month, setMonth] = useState(currentMonth());
   const summary = store.getMonthlySummary(month);
   const cats = store.getCategoryStats(month);
   const maxCat = cats[0]?.amount ?? 0;
+  const trend = analyzeTrends(store.state.transactions, { referenceMonth: month });
 
   return (
     <div className="panel">
@@ -37,6 +44,44 @@ export function StatsView() {
           <span className="overview-value">{summary.count}</span>
         </div>
       </div>
+      <h3>环比 / 同比</h3>
+      <div className="stat-cards">
+        <div className="stat-card">
+          <span className="overview-label">支出环比</span>
+          <span className={`overview-value ${trend.expense.pct !== null && trend.expense.pct > 0 ? 'negative' : 'positive'}`}>{pctLabel(trend.expense.pct)}</span>
+        </div>
+        <div className="stat-card">
+          <span className="overview-label">支出同比</span>
+          <span className={`overview-value ${trend.expense.yoyPct !== null && trend.expense.yoyPct > 0 ? 'negative' : 'positive'}`}>{pctLabel(trend.expense.yoyPct)}</span>
+        </div>
+        <div className="stat-card">
+          <span className="overview-label">收入环比</span>
+          <span className="overview-value positive">{pctLabel(trend.income.pct)}</span>
+        </div>
+        <div className="stat-card">
+          <span className="overview-label">预计全月</span>
+          <span className="overview-value">¥{formatMoney(trend.projectedMonthExpense)}</span>
+        </div>
+      </div>
+      {(trend.topRisers.length > 0 || trend.topFallers.length > 0) && (
+        <>
+          <h3>分类涨跌（对比上月）</h3>
+          <ul className="cat-list">
+            {trend.topRisers.map((c) => (
+              <li key={`r-${c.category}`}>
+                <span className="cat-name">↑ {c.category}</span>
+                <span className="cat-amount">¥{formatMoney(c.current)}（{pctLabel(c.pct)}）</span>
+              </li>
+            ))}
+            {trend.topFallers.map((c) => (
+              <li key={`f-${c.category}`}>
+                <span className="cat-name">↓ {c.category}</span>
+                <span className="cat-amount">¥{formatMoney(c.current)}（{pctLabel(c.pct)}）</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <h3>分类支出</h3>
       {cats.length === 0 && <p className="empty">本月暂无支出</p>}
       <ul className="cat-list">

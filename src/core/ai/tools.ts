@@ -3,6 +3,7 @@
  * 让 AI 能通过工具调用完成记账操作
  */
 import { formatMoney } from '../engine/engine';
+import { analyzeTrends, formatTrendReport } from '../analytics/trends';
 import { store, memoryStore } from '../../ui/appState';
 import { ValidationError } from '../store/store';
 import type { MemoryCategory } from '../store/memory';
@@ -129,6 +130,19 @@ export const AI_TOOLS = [
         type: 'object',
         properties: {
           month: { type: 'string', description: '月份 YYYY-MM（可选，默认本月）' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'analyze_trends',
+      description: '消费趋势分析：计算指定月份的支出/收入环比（对比上月）与同比（对比去年同月）、各分类增减、最大涨/跌幅分类，以及按当前节奏预测的全月支出。用户问「这个月比上个月如何」「消费趋势」「环比/同比」「哪些类别涨了」时调用，避免手动翻阅 list_transactions 计算。',
+      parameters: {
+        type: 'object',
+        properties: {
+          month: { type: 'string', description: '参考月份 YYYY-MM（可选，默认本月）' },
         },
       },
     },
@@ -279,6 +293,8 @@ export function executeTool(call: ToolCall): ToolResult {
         return execQuerySummary(call.arguments);
       case 'query_overview':
         return execQueryOverview(call.arguments);
+      case 'analyze_trends':
+        return execAnalyzeTrends(call.arguments);
       case 'query_upcoming_payments':
         return execQueryUpcomingPayments(call.arguments);
       case 'add_account':
@@ -549,6 +565,15 @@ function execQueryOverview(args: Record<string, unknown>): ToolResult {
     lines.push(`【下月待还 ${nextMonth}】无待还款项`);
   }
   return { name: 'query_overview', result: lines.join('\n'), success: true };
+}
+
+function execAnalyzeTrends(args: Record<string, unknown>): ToolResult {
+  const month = (args.month as string) || todayStr().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return { name: 'analyze_trends', result: 'month 格式应为 YYYY-MM', success: false };
+  }
+  const report = analyzeTrends(store.state.transactions, { referenceMonth: month });
+  return { name: 'analyze_trends', result: formatTrendReport(report), success: true };
 }
 
 function execQueryUpcomingPayments(args: Record<string, unknown>): ToolResult {
