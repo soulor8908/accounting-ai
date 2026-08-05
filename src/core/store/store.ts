@@ -561,6 +561,14 @@ export class Store {
     return rule;
   }
 
+  updateRecurringRule(id: string, patch: Partial<Omit<RecurringRule, 'id'>>): RecurringRule | null {
+    const rule = this.state.recurringRules.find((r) => r.id === id);
+    if (!rule) return null;
+    Object.assign(rule, patch, { id: rule.id });
+    this.save();
+    return rule;
+  }
+
   /** 生成所有到期未生成的周期流水（每条规则最多向前补 36 期） */
   generateDueRecurring(upToDate: string): Transaction[] {
     const generated: Transaction[] = [];
