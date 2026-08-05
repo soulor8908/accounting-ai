@@ -3,6 +3,7 @@ import { formatMoney } from '../core/engine/engine';
 import { ValidationError } from '../core/store/store';
 import type { Account, AccountMeta, AccountType, RepaymentMethod } from '../core/types';
 import { round2 } from '../core/utils/money';
+import { calcMonthlyPayment, addMonthsClamped } from '../core/finance/loan';
 import { store } from './appState';
 import { dialog } from './Dialog';
 import { SwipeableRow } from './SwipeableRow';
@@ -46,6 +47,13 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
   const [editBillDay, setEditBillDay] = useState('');
   const [editDueDay, setEditDueDay] = useState('');
   const [editDueNextDay, setEditDueNextDay] = useState(false);
+  // 贷款编辑字段
+  const [editPrincipal, setEditPrincipal] = useState('');
+  const [editAnnualRate, setEditAnnualRate] = useState('');
+  const [editTermMonths, setEditTermMonths] = useState('');
+  const [editStartDate, setEditStartDate] = useState('');
+  const [editRepaymentMethod, setEditRepaymentMethod] = useState<RepaymentMethod>('equal_interest');
+  const [editLoanDueDay, setEditLoanDueDay] = useState('');
   const [editError, setEditError] = useState('');
 
   const onSubmit = (e: FormEvent) => {
@@ -125,6 +133,13 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
       setEditDueNextDay(acc.meta.dueNextMonth ?? false);
     } else if (acc.meta?.kind === 'installment') {
       setEditLimit(String(acc.meta.totalLimit));
+    } else if (acc.meta?.kind === 'loan') {
+      setEditPrincipal(String(acc.meta.principal));
+      setEditAnnualRate(String(acc.meta.annualRate));
+      setEditTermMonths(String(acc.meta.termMonths));
+      setEditStartDate(acc.meta.startDate);
+      setEditRepaymentMethod(acc.meta.repaymentMethod);
+      setEditLoanDueDay(String(acc.meta.dueDay));
     }
   };
 
@@ -145,6 +160,47 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
         };
       } else if (acc.meta?.kind === 'installment') {
         patch.meta = { ...acc.meta, totalLimit: Number(editLimit) || acc.meta.totalLimit };
+      } else if (acc.meta?.kind === 'loan') {
+        const oldMeta = acc.meta;
+        const p = Number(editPrincipal) || oldMeta.principal;
+        const rate = Number(editAnnualRate) || oldMeta.annualRate;
+        const term = Math.max(1, Math.min(360, Number(editTermMonths) || oldMeta.termMonths));
+        const start = editStartDate || oldMeta.startDate;
+        const dd = clampDay(editLoanDueDay, oldMeta.dueDay);
+        const method = editRepaymentMethod;
+
+        // 重新计算月供
+        const monthly = calcMonthlyPayment(p, rate, term, method);
+
+        const paidMonths = Math.min(oldMeta.paidMonths, term);
+        // 下期还款日保持不变（除非改了放款日或期数少于已还月数）
+        let nextDueDate = oldMeta.nextDueDate;
+        if (start !== oldMeta.startDate) {
+          nextDueDate = addMonthsClamped(start, 1);
+        }
+        if (paidMonths >= term) {
+          nextDueDate = oldMeta.nextDueDate;
+        }
+
+        patch.meta = {
+          ...oldMeta,
+          principal: p,
+          annualRate: rate,
+          termMonths: term,
+          startDate: start,
+          repaymentMethod: method,
+          monthlyPayment: monthly,
+          paidMonths,
+          dueDay: dd,
+          nextDueDate,
+        };
+
+        // 同步更新关联的周期规则（如贷款月供自动扣款规则）
+        for (const rule of store.state.recurringRules) {
+          if (rule.relatedAccountId === acc.id && rule.type === 'repayment') {
+            store.updateRecurringRule(rule.id, { amount: monthly });
+          }
+        }
       }
       store.updateAccount(acc.id, patch);
       setEditingId(null);
@@ -190,7 +246,9 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
                     <>
                       <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="额度" inputMode="decimal" aria-label="编辑额度" />
                       <input value={editBillDay} onChange={(e) => setEditBillDay(e.target.value)} placeholder="账单日" inputMode="numeric" aria-label="编辑账单日" />
-                      <input value={editDueDay} onChange={(e) => setEditDueDay(e.target.value)} placeholder="还款日" inputMode="numeric" aria-label="编辑还款日" />
+                      {!editDueNextDay && (
+                        <input value={editDueDay} onChange={(e) => setEditDueDay(e.target.value)} placeholder="还款日" inputMode="numeric" aria-label="编辑还款日" />
+                      )}
                       <label className="check-row">
                         <input type="checkbox" checked={editDueNextDay} onChange={(e) => setEditDueNextDay(e.target.checked)} />
                         <span>还款日在次月</span>
@@ -199,6 +257,20 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
                   )}
                   {a.meta?.kind === 'installment' && (
                     <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="总额度" inputMode="decimal" aria-label="编辑总额度" />
+                  )}
+                  {a.meta?.kind === 'loan' && (
+                    <>
+                      <input value={editPrincipal} onChange={(e) => setEditPrincipal(e.target.value)} placeholder="贷款本金" inputMode="decimal" aria-label="编辑贷款本金" />
+                      <input value={editAnnualRate} onChange={(e) => setEditAnnualRate(e.target.value)} placeholder="年利率（如 0.049）" inputMode="decimal" aria-label="编辑年利率" />
+                      <input value={editTermMonths} onChange={(e) => setEditTermMonths(e.target.value)} placeholder="期数（月）" inputMode="numeric" aria-label="编辑期数" />
+                      <input value={editStartDate} onChange={(e) => setEditStartDate(e.target.value)} type="date" aria-label="编辑放款日" />
+                      <select value={editRepaymentMethod} onChange={(e) => setEditRepaymentMethod(e.target.value as RepaymentMethod)} aria-label="编辑还款方式">
+                        <option value="equal_interest">等额本息</option>
+                        <option value="equal_principal">等额本金</option>
+                        <option value="interest_only">先息后本</option>
+                      </select>
+                      <input value={editLoanDueDay} onChange={(e) => setEditLoanDueDay(e.target.value)} placeholder="每月还款日（1-31）" inputMode="numeric" aria-label="编辑每月还款日" />
+                    </>
                   )}
                   <div className="edit-actions">
                     <button type="button" className="btn-sm" onClick={() => saveEdit(a)}>保存</button>
@@ -281,8 +353,7 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
             <input
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              placeholder="放款日 如 2026-01-15"
-              pattern="\d{4}-\d{2}-\d{2}"
+              type="date"
               aria-label="放款日"
             />
             <select value={repaymentMethod} onChange={(e) => setRepaymentMethod(e.target.value as RepaymentMethod)} aria-label="还款方式">
