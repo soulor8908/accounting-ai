@@ -900,7 +900,8 @@ main {
   width: 100%;
 }
 
-.account-edit-form input {
+.account-edit-form input,
+.account-edit-form select {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -908,9 +909,27 @@ main {
   flex: 1;
   min-width: 80px;
   outline: none;
+  background-color: var(--card);
+  color: var(--ink);
+  font-family: var(--font-body);
 }
 
-.account-edit-form input:focus {
+/* select 右侧留白给自定义箭头 */
+.account-edit-form select {
+  padding-right: 34px;
+  cursor: pointer;
+}
+
+/* 日期输入与文本框保持一致紧凑尺寸（覆盖全局 date 样式） */
+.account-edit-form input[type="date"] {
+  padding: 8px 34px 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  min-height: 0;
+}
+
+.account-edit-form input:focus,
+.account-edit-form select:focus {
   border-color: rgba(23, 96, 77, 0.55);
   box-shadow: 0 0 0 3px rgba(23, 96, 77, 0.1);
 }

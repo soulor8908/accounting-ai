@@ -241,7 +241,9 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
               <div className="account-item">
                 <div className="account-edit-form">
                   <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="账户名" aria-label="编辑账户名" />
-                  <input value={editBalance} onChange={(e) => setEditBalance(e.target.value)} placeholder="余额" inputMode="decimal" aria-label="编辑余额" />
+                  {a.meta?.kind !== 'loan' && (
+                    <input value={editBalance} onChange={(e) => setEditBalance(e.target.value)} placeholder="余额" inputMode="decimal" aria-label="编辑余额" />
+                  )}
                   {a.meta?.kind === 'credit' && (
                     <>
                       <input value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="额度" inputMode="decimal" aria-label="编辑额度" />
