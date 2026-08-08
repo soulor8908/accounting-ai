@@ -417,3 +417,72 @@ describe('数据形状校验', () => {
     expect(isValidStateShape({ schemaVersion: 1, accounts: [], transactions: [], installmentPlans: [], recurringRules: [] })).toBe(true);
   });
 });
+
+describe('编辑流水 updateTransaction', () => {
+  let store: Store;
+  let acc: Record<string, Account>;
+  beforeEach(() => {
+    store = makeStore();
+    acc = seedAccounts(store);
+  });
+
+  it('修改支付账户：旧账户回滚、新账户扣减', () => {
+    const { wechat, cmb } = acc;
+    const { tx } = store.applyTransaction({ type: 'expense', amount: 100, accountId: wechat.id, date: TODAY, description: '午餐' });
+    expect(wechat.balance).toBe(900);
+    store.updateTransaction(tx.id, { accountId: cmb.id });
+    expect(store.state.transactions[0].accountId).toBe(cmb.id);
+    expect(wechat.balance).toBe(1000);
+    expect(cmb.balance).toBe(19900);
+  });
+
+  it('修改金额：按差额调整账户余额', () => {
+    const { wechat } = acc;
+    const { tx } = store.applyTransaction({ type: 'expense', amount: 100, accountId: wechat.id, date: TODAY });
+    store.updateTransaction(tx.id, { amount: 30 });
+    expect(wechat.balance).toBe(970);
+    expect(store.state.transactions[0].amount).toBe(30);
+  });
+
+  it('同时改金额与账户：先回滚旧值再应用新值', () => {
+    const { wechat, cmb } = acc;
+    const { tx } = store.applyTransaction({ type: 'expense', amount: 100, accountId: wechat.id, date: TODAY });
+    store.updateTransaction(tx.id, { accountId: cmb.id, amount: 250 });
+    expect(wechat.balance).toBe(1000);
+    expect(cmb.balance).toBe(19750);
+    expect(store.state.transactions[0].amount).toBe(250);
+  });
+
+  it('转账：同时修改转出与转入账户，两端余额正确迁移', () => {
+    const { wechat, cmb, cc } = acc;
+    const { tx } = store.applyTransaction({ type: 'transfer', amount: 200, accountId: wechat.id, relatedAccountId: cmb.id, date: TODAY });
+    expect(wechat.balance).toBe(800);
+    expect(cmb.balance).toBe(20200);
+    store.updateTransaction(tx.id, { accountId: cmb.id, relatedAccountId: cc.id });
+    // wechat 回滚 +200 → 1000；cmb 回滚 -200 再扣 200 → 19800；cc +200 → 200
+    expect(wechat.balance).toBe(1000);
+    expect(cmb.balance).toBe(19800);
+    expect(cc.balance).toBe(200);
+  });
+
+  it('转账清空目标账户报错', () => {
+    const { wechat, cmb } = acc;
+    const { tx } = store.applyTransaction({ type: 'transfer', amount: 200, accountId: wechat.id, relatedAccountId: cmb.id, date: TODAY });
+    expect(() => store.updateTransaction(tx.id, { relatedAccountId: '' })).toThrow(ValidationError);
+  });
+
+  it('账户不存在时报错', () => {
+    const { wechat } = acc;
+    const { tx } = store.applyTransaction({ type: 'expense', amount: 100, accountId: wechat.id, date: TODAY });
+    expect(() => store.updateTransaction(tx.id, { accountId: 'not-exist' })).toThrow(ValidationError);
+  });
+
+  it('调账不自动调整账户余额', () => {
+    const { wechat, cmb } = acc;
+    const { tx } = store.applyTransaction({ type: 'adjustment', amount: 50, accountId: wechat.id, date: TODAY });
+    const before = wechat.balance;
+    store.updateTransaction(tx.id, { accountId: cmb.id });
+    expect(wechat.balance).toBe(before);
+    expect(cmb.balance).toBe(20000);
+  });
+});

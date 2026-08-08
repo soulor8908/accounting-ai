@@ -37,6 +37,8 @@ interface EditState {
   amount: string;
   date: string;
   category: string;
+  accountId: string;
+  relatedAccountId: string; // 仅 transfer/repayment 使用
 }
 
 export function TxListView({ onChanged }: { onChanged?: () => void }) {
@@ -71,6 +73,8 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
       amount: String(t.amount),
       date: t.date,
       category: t.category || '',
+      accountId: t.accountId,
+      relatedAccountId: t.relatedAccountId ?? '',
     });
   };
 
@@ -87,16 +91,36 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
       dialog.toast('请填写日期', 'error');
       return;
     }
-    store.updateTransaction(editing.id, {
-      description: editing.description.trim(),
-      amount,
-      date: editing.date,
-      category: editing.category.trim() || undefined,
-    });
-    setEditing(null);
-    setTick((n) => n + 1);
-    onChanged?.();
-    dialog.toast('已保存修改', 'success');
+    if (!editing.accountId) {
+      dialog.toast('请选择支付账户', 'error');
+      return;
+    }
+    const origTx = store.state.transactions.find((t) => t.id === editing.id);
+    const hasRelated = origTx?.type === 'transfer' || origTx?.type === 'repayment';
+    if (hasRelated && !editing.relatedAccountId) {
+      dialog.toast('请选择目标账户', 'error');
+      return;
+    }
+    if (hasRelated && editing.relatedAccountId === editing.accountId) {
+      dialog.toast('目标账户不能与支付账户相同', 'error');
+      return;
+    }
+    try {
+      store.updateTransaction(editing.id, {
+        description: editing.description.trim(),
+        amount,
+        date: editing.date,
+        category: editing.category.trim() || undefined,
+        accountId: editing.accountId,
+        relatedAccountId: hasRelated ? editing.relatedAccountId : undefined,
+      });
+      setEditing(null);
+      setTick((n) => n + 1);
+      onChanged?.();
+      dialog.toast('已保存修改', 'success');
+    } catch (err) {
+      dialog.toast(err instanceof Error ? err.message : '保存失败', 'error');
+    }
   };
 
   const onDelete = async (t: Transaction) => {
@@ -206,6 +230,42 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
                       placeholder="如：餐饮、交通"
                     />
                   </div>
+                  <div className="form-row">
+                    <span>支付账户</span>
+                    <select
+                      aria-label="支付账户"
+                      value={editing.accountId}
+                      onChange={(e) => setEditing({ ...editing, accountId: e.target.value })}
+                    >
+                      {store.state.accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {(() => {
+                    const origTx = store.state.transactions.find((t) => t.id === editing.id);
+                    if (origTx?.type !== 'transfer' && origTx?.type !== 'repayment') return null;
+                    return (
+                      <div className="form-row">
+                        <span>{origTx.type === 'transfer' ? '转入账户' : '还款账户'}</span>
+                        <select
+                          aria-label="目标账户"
+                          value={editing.relatedAccountId}
+                          onChange={(e) => setEditing({ ...editing, relatedAccountId: e.target.value })}
+                        >
+                          {store.state.accounts
+                            .filter((a) => a.id !== editing.accountId)
+                            .map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    );
+                  })()}
                   <div className="edit-actions">
                     <button type="button" onClick={saveEdit} className="btn-primary-sm">保存</button>
                     <button type="button" onClick={cancelEdit} className="btn-sm">取消</button>

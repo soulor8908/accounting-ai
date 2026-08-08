@@ -454,64 +454,122 @@ export class Store {
     const idx = this.state.transactions.findIndex((t) => t.id === id);
     if (idx < 0) return null;
     const tx = this.state.transactions[idx];
-    // 反向调整账户余额
-    const acc = this.getAccount(tx.accountId);
-    if (acc) {
-      switch (tx.type) {
-        case 'income':
-        case 'refund':
-          acc.balance -= tx.amount;
-          break;
-        case 'expense':
-        case 'repayment':
-          acc.balance += tx.amount;
-          break;
-        case 'transfer': {
-          acc.balance += tx.amount;
-          if (tx.relatedAccountId) {
-            const to = this.getAccount(tx.relatedAccountId);
-            if (to) to.balance -= tx.amount;
-          }
-          break;
-        }
-        case 'adjustment':
-          // 调账方向不确定，不自动调整
-          break;
-      }
-    }
-    // 如果是还款，恢复负债账户余额
-    if (tx.type === 'repayment' && tx.relatedAccountId) {
-      const debt = this.getAccount(tx.relatedAccountId);
-      if (debt) debt.balance += tx.amount;
-    }
+    // 反向调整账户余额（复用回滚逻辑，adjustment 不自动调整）
+    this.rollbackTxBalance(tx, tx.amount, tx.accountId, tx.relatedAccountId);
     this.state.transactions.splice(idx, 1);
     this.save();
     return tx;
   }
 
-  /** 更新流水（仅修改描述、分类、日期、金额） */
-  updateTransaction(id: string, patch: Partial<Pick<Transaction, 'description' | 'category' | 'date' | 'amount'>>): Transaction | null {
+  /** 更新流水（描述、分类、日期、金额、支付账户、转账对手方）
+   *  金额或账户变更时，先回滚原流水对账户余额的影响，再按新值应用，保证账面始终平衡。 */
+  updateTransaction(id: string, patch: Partial<Pick<Transaction, 'description' | 'category' | 'date' | 'amount' | 'accountId' | 'relatedAccountId'>>): Transaction | null {
     const tx = this.state.transactions.find((t) => t.id === id);
     if (!tx) return null;
-    if (patch.description !== undefined) tx.description = patch.description;
-    if (patch.category !== undefined) tx.category = patch.category;
-    if (patch.date !== undefined) tx.date = patch.date;
-    if (patch.amount !== undefined && patch.amount !== tx.amount) {
-      // 金额变更：先回滚旧金额，再应用新金额
-      const diff = patch.amount - tx.amount;
-      const acc = this.getAccount(tx.accountId);
-      if (acc) {
-        if (tx.type === 'expense' || tx.type === 'repayment') acc.balance -= diff;
-        else if (tx.type === 'income' || tx.type === 'refund') acc.balance += diff;
+
+    // 校验新账户存在
+    if (patch.accountId !== undefined && patch.accountId !== tx.accountId) {
+      if (!this.getAccount(patch.accountId)) {
+        throw new ValidationError([{ code: 'account_not_found', message: '账户不存在' }]);
       }
-      if (tx.type === 'transfer' && tx.relatedAccountId) {
-        const to = this.getAccount(tx.relatedAccountId);
-        if (to) to.balance += diff;
+    }
+    if (patch.relatedAccountId !== undefined && patch.relatedAccountId) {
+      if (!this.getAccount(patch.relatedAccountId)) {
+        throw new ValidationError([{ code: 'account_not_found', message: '目标账户不存在' }]);
       }
-      tx.amount = patch.amount;
+    }
+    // transfer 必须有目标账户；repayment 必须有负债目标
+    const willType = tx.type;
+    const willRelated = patch.relatedAccountId !== undefined ? patch.relatedAccountId : tx.relatedAccountId;
+    if ((willType === 'transfer' || willType === 'repayment') && !willRelated) {
+      throw new ValidationError([{ code: 'invalid_operation', message: willType === 'transfer' ? '转账需要目标账户' : '还款需要目标负债账户' }]);
+    }
+
+    const newAmount = patch.amount !== undefined ? round2(patch.amount) : tx.amount;
+    const newAccountId = patch.accountId ?? tx.accountId;
+    const newRelated = patch.relatedAccountId !== undefined ? patch.relatedAccountId : tx.relatedAccountId;
+
+    const amountChanged = newAmount !== tx.amount;
+    const accountChanged = (patch.accountId !== undefined && patch.accountId !== tx.accountId) ||
+      (patch.relatedAccountId !== undefined && patch.relatedAccountId !== tx.relatedAccountId);
+
+    // 金额或账户变化：先回滚原流水影响，再应用新值
+    if (amountChanged || accountChanged) {
+      this.rollbackTxBalance(tx, tx.amount, tx.accountId, tx.relatedAccountId);
+      if (patch.description !== undefined) tx.description = patch.description;
+      if (patch.category !== undefined) tx.category = patch.category;
+      if (patch.date !== undefined) tx.date = patch.date;
+      tx.amount = newAmount;
+      tx.accountId = newAccountId;
+      tx.relatedAccountId = newRelated || undefined;
+      this.applyTxBalance(tx, tx.amount, tx.accountId, tx.relatedAccountId);
+    } else {
+      if (patch.description !== undefined) tx.description = patch.description;
+      if (patch.category !== undefined) tx.category = patch.category;
+      if (patch.date !== undefined) tx.date = patch.date;
     }
     this.save();
     return tx;
+  }
+
+  /** 回滚一笔流水对账户余额的影响（按指定金额/账户，便于编辑时用旧值或新值） */
+  private rollbackTxBalance(tx: Transaction, amount: number, accountId: string, relatedAccountId?: string): void {
+    const acc = this.getAccount(accountId);
+    if (acc) {
+      switch (tx.type) {
+        case 'income':
+        case 'refund':
+          acc.balance -= amount;
+          break;
+        case 'expense':
+        case 'repayment':
+          acc.balance += amount;
+          break;
+        case 'transfer':
+          acc.balance += amount;
+          break;
+        case 'adjustment':
+          break;
+      }
+    }
+    if (tx.type === 'transfer' && relatedAccountId) {
+      const to = this.getAccount(relatedAccountId);
+      if (to) to.balance -= amount;
+    }
+    if (tx.type === 'repayment' && relatedAccountId) {
+      const debt = this.getAccount(relatedAccountId);
+      if (debt) debt.balance += amount;
+    }
+  }
+
+  /** 应用一笔流水对账户余额的影响（与 rollbackTxBalance 对称） */
+  private applyTxBalance(tx: Transaction, amount: number, accountId: string, relatedAccountId?: string): void {
+    const acc = this.getAccount(accountId);
+    if (acc) {
+      switch (tx.type) {
+        case 'income':
+        case 'refund':
+          acc.balance += amount;
+          break;
+        case 'expense':
+        case 'repayment':
+          acc.balance -= amount;
+          break;
+        case 'transfer':
+          acc.balance -= amount;
+          break;
+        case 'adjustment':
+          break;
+      }
+    }
+    if (tx.type === 'transfer' && relatedAccountId) {
+      const to = this.getAccount(relatedAccountId);
+      if (to) to.balance += amount;
+    }
+    if (tx.type === 'repayment' && relatedAccountId) {
+      const debt = this.getAccount(relatedAccountId);
+      if (debt) debt.balance -= amount;
+    }
   }
 
   /** 供引擎使用：把"创建分期计划"挂到最近一次撤销记录上 */
