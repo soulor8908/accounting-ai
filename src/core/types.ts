@@ -63,6 +63,8 @@ export interface Account {
   currency: string;
   createdAt: string;
   meta?: AccountMeta;
+  /** 已注销（软删除）：余额归零、不再参与统计与待还提醒，历史流水保留 */
+  archived?: boolean;
 }
 
 // ---------- 交易流水 ----------

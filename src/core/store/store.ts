@@ -205,6 +205,15 @@ export class Store {
     this.save();
   }
 
+  /** 注销账户（软删除）：余额归零、不再统计与提醒，历史流水保留，派生状态冻结 */
+  archiveAccount(id: string): void {
+    const acc = this.getAccount(id);
+    if (!acc) throw new ValidationError([{ code: 'account_not_found', message: '账户不存在' }]);
+    acc.archived = true;
+    acc.balance = 0;
+    this.save();
+  }
+
   /** 模糊匹配账户名：hint 与 name 互相包含（剥离常见后缀） */
   resolveAccounts(hint: string): Account[] {
     const norm = (s: string) => s.toLowerCase().replace(/[卡账户的零钱余额\s]/g, '');
@@ -726,7 +735,7 @@ export class Store {
   getTotalAssets(): number {
     return round2(
       this.state.accounts
-        .filter((a) => ASSET_TYPES.includes(a.type))
+        .filter((a) => !a.archived && ASSET_TYPES.includes(a.type))
         .reduce((s, a) => s + a.balance, 0),
     );
   }
@@ -734,7 +743,7 @@ export class Store {
   getTotalLiabilities(): number {
     return round2(
       this.state.accounts
-        .filter((a) => a.type === 'credit' || a.type === 'installment' || a.type === 'loan')
+        .filter((a) => !a.archived && (a.type === 'credit' || a.type === 'installment' || a.type === 'loan'))
         .reduce((s, a) => s + Math.max(0, a.balance), 0),
     );
   }
@@ -750,6 +759,7 @@ export class Store {
     const nextMonthStr = cm === 12 ? `${cy + 1}-01` : `${cy}-${String(cm + 1).padStart(2, '0')}`;
 
     for (const acc of this.state.accounts) {
+      if (acc.archived) continue;
       if (acc.meta?.kind === 'credit') {
         const meta: CreditCardMeta = acc.meta;
         // 信用卡只显示当月账单周期：账单日在当月，还款日在当月或次月

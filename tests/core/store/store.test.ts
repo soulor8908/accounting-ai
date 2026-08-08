@@ -52,6 +52,47 @@ describe('账户管理', () => {
     store.applyTransaction({ type: 'expense', amount: 10, accountId: wechat.id, date: TODAY });
     expect(() => store.removeAccount(wechat.id)).toThrow(ValidationError);
   });
+
+  it('注销账户：余额归零、archived 标记、历史流水保留', () => {
+    const wallet = store.addAccount({ name: '微信零钱', type: 'wallet', balance: 1000 });
+    store.applyTransaction({ type: 'expense', amount: 100, accountId: wallet.id, date: TODAY });
+    expect(store.getAccount(wallet.id)!.balance).toBe(900);
+    store.archiveAccount(wallet.id);
+    const acc = store.getAccount(wallet.id)!;
+    expect(acc.archived).toBe(true);
+    expect(acc.balance).toBe(0);
+    // 历史流水保留
+    expect(store.state.transactions).toHaveLength(1);
+  });
+
+  it('注销后账户不再计入总资产/总负债', () => {
+    store.addAccount({ name: '微信零钱', type: 'wallet', balance: 1000 });
+    store.addAccount({
+      name: '信用卡', type: 'credit', balance: 500,
+      meta: { kind: 'credit', limit: 10000, billDay: 1, dueDay: 20 },
+    });
+    expect(store.getTotalAssets()).toBe(1000);
+    expect(store.getTotalLiabilities()).toBe(500);
+    store.archiveAccount(store.state.accounts[0].id);
+    store.archiveAccount(store.state.accounts[1].id);
+    expect(store.getTotalAssets()).toBe(0);
+    expect(store.getTotalLiabilities()).toBe(0);
+  });
+
+  it('注销后贷款账户不再产生待还提醒', () => {
+    store.addAccount({ name: '微信零钱', type: 'wallet', balance: 100000 });
+    store.addAccount({
+      name: '房贷', type: 'loan', balance: 500000,
+      meta: { kind: 'loan', principal: 500000, annualRate: 0.049, termMonths: 360, startDate: '2024-01-01', repaymentMethod: 'equal_interest', monthlyPayment: 2653, autoDeduct: false, paidMonths: 0, dueDay: 20, nextDueDate: '2024-02-01' },
+    });
+    expect(store.getDueItems('2024-02', '2024-02-01').some((i) => i.kind === 'loan')).toBe(true);
+    store.archiveAccount(store.state.accounts[1].id);
+    expect(store.getDueItems('2024-02', '2024-02-01').some((i) => i.kind === 'loan')).toBe(false);
+  });
+
+  it('注销不存在的账户报错', () => {
+    expect(() => store.archiveAccount('not-exist')).toThrow(ValidationError);
+  });
 });
 
 describe('支出/收入', () => {

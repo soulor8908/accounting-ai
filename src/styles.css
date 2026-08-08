@@ -965,6 +965,50 @@ main {
   color: var(--cinnabar);
 }
 
+.tag.archived-tag {
+  background: var(--border-soft);
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* 已停用账户折叠区 */
+.archived-group {
+  margin-top: 14px;
+}
+
+.archived-group > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+  padding: 8px 4px;
+  user-select: none;
+  list-style: none;
+}
+
+.archived-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.archived-group > summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.18s ease;
+}
+
+.archived-group[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.account-item.archived {
+  opacity: 0.6;
+  background: var(--card-warm);
+  border-style: dashed;
+}
+
 /* 表单 */
 .account-form {
   display: flex;

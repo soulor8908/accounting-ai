@@ -30,11 +30,11 @@ const SELECTABLE_SET = new Set(SELECTABLE_ACCOUNT_TYPES);
 /** 还款目标账户类型：信用卡/分期（贷款还款走周期规则，不手动新增） */
 const REPAYMENT_TARGET_TYPES: AccountType[] = ['credit', 'installment'];
 
-/** 流水是否可编辑：主账户与对手方都不能是贷款账户 */
+/** 流水是否可编辑：主账户与对手方都不能是贷款账户，且不能是已注销账户 */
 function isTxEditable(t: Transaction): boolean {
   const main = store.getAccount(t.accountId);
   const related = t.relatedAccountId ? store.getAccount(t.relatedAccountId) : undefined;
-  return !!main && SELECTABLE_SET.has(main.type) && (!related || SELECTABLE_SET.has(related.type));
+  return !!main && !main.archived && SELECTABLE_SET.has(main.type) && (!related || (!related.archived && SELECTABLE_SET.has(related.type)));
 }
 
 /** 当前月份（YYYY-MM），作为流水列表的默认筛选值 */
@@ -73,7 +73,7 @@ interface AddState {
 const ADD_TYPES: TxType[] = ['expense', 'income', 'transfer', 'repayment', 'refund', 'adjustment'];
 
 function emptyAddState(): AddState {
-  const first = store.state.accounts.find((a) => SELECTABLE_SET.has(a.type));
+  const first = store.state.accounts.find((a) => !a.archived && SELECTABLE_SET.has(a.type));
   return {
     type: 'expense',
     amount: '',
@@ -339,7 +339,7 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
                 onChange={(e) => setAdding({ ...adding, accountId: e.target.value })}
               >
                 {store.state.accounts
-                  .filter((a) => SELECTABLE_SET.has(a.type))
+                  .filter((a) => !a.archived && SELECTABLE_SET.has(a.type))
                   .map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}
@@ -357,7 +357,7 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
                 >
                   <option value="">请选择</option>
                   {store.state.accounts
-                    .filter((a) => SELECTABLE_SET.has(a.type) && a.id !== adding.accountId)
+                    .filter((a) => !a.archived && SELECTABLE_SET.has(a.type) && a.id !== adding.accountId)
                     .map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.name}
@@ -376,7 +376,7 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
                 >
                   <option value="">请选择</option>
                   {store.state.accounts
-                    .filter((a) => REPAYMENT_TARGET_TYPES.includes(a.type) && a.id !== adding.accountId)
+                    .filter((a) => !a.archived && REPAYMENT_TARGET_TYPES.includes(a.type) && a.id !== adding.accountId)
                     .map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.name}

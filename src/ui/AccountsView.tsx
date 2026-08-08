@@ -223,6 +223,19 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
       onChanged();
       dialog.toast('账户已删除', 'success');
     } catch (err) {
+      // 有历史流水无法删除：提示改为注销（软删除，保留流水、余额归零、不再统计）
+      if (err instanceof ValidationError && err.issues.some((i) => i.code === 'has_transactions')) {
+        const archive = await dialog.confirm(
+          `账户「${acc.name}」有历史流水，无法直接删除。\n改为注销？注销后历史流水保留，余额归零且不再参与统计。`,
+          '改为注销',
+        );
+        if (!archive) return;
+        store.archiveAccount(acc.id);
+        setEditingId(null);
+        onChanged();
+        dialog.toast('账户已注销', 'success');
+        return;
+      }
       const msg = err instanceof ValidationError ? err.message : '删除失败';
       setEditError(msg);
       dialog.toast(msg, 'error');
@@ -230,12 +243,14 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
   };
 
   const isEditing = (acc: Account) => editingId === acc.id;
+  const activeAccounts = store.state.accounts.filter((a) => !a.archived);
+  const archivedAccounts = store.state.accounts.filter((a) => a.archived);
 
   return (
     <div className="panel">
       <h2>账户</h2>
       <ul className="account-list">
-        {store.state.accounts.map((a) => (
+        {activeAccounts.map((a) => (
           <li key={a.id}>
             {isEditing(a) ? (
               <div className="account-item">
@@ -316,8 +331,30 @@ export function AccountsView({ onChanged }: { onChanged: () => void }) {
             )}
           </li>
         ))}
-        {store.state.accounts.length === 0 && <li className="empty">还没有账户，先在下方添加一个吧</li>}
+        {activeAccounts.length === 0 && <li className="empty">还没有账户，先在下方添加一个吧</li>}
       </ul>
+
+      {archivedAccounts.length > 0 && (
+        <details className="archived-group">
+          <summary>已停用账户（{archivedAccounts.length}）</summary>
+          <ul className="account-list">
+            {archivedAccounts.map((a) => (
+              <li key={a.id}>
+                <div className="account-item archived">
+                  <div className="account-info">
+                    <strong>{a.name}</strong>
+                    <span className="tag">{TYPE_LABEL[a.type]}</span>
+                    <span className="tag archived-tag">已注销</span>
+                  </div>
+                  <div className="account-right">
+                    <span className="muted">¥{formatMoney(a.balance)}</span>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       <h3>添加账户</h3>
       <form className="account-form" onSubmit={onSubmit}>
