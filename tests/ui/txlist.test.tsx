@@ -252,3 +252,101 @@ describe('TxListView 贷款流水不可编辑', () => {
     expect(within(ccRow).getByRole('button', { name: '编辑' })).toBeInTheDocument();
   });
 });
+
+describe('TxListView 新增流水', () => {
+  beforeEach(() => {
+    cleanup();
+    store.clearAll();
+  });
+
+  it('新增支出流水成功，余额正确扣减', async () => {
+    const user = userEvent.setup();
+    store.addAccount({ name: '微信零钱', type: 'wallet', balance: 1000 });
+    renderTxList();
+
+    await user.click(screen.getByRole('button', { name: /记一笔/ }));
+    // 默认类型=支出、默认账户=微信零钱，只需填金额
+    await user.type(screen.getByPlaceholderText('0.00'), '50');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(await screen.findByText('已新增流水')).toBeInTheDocument();
+    expect(store.state.transactions).toHaveLength(1);
+    expect(store.state.transactions[0].amount).toBe(50);
+    expect(store.state.accounts[0].balance).toBe(950);
+  });
+
+  it('贷款账户不在支付账户选项中', async () => {
+    const user = userEvent.setup();
+    store.addAccount({ name: '微信零钱', type: 'wallet', balance: 1000 });
+    store.addAccount({
+      name: '房贷',
+      type: 'loan',
+      balance: 500000,
+      meta: {
+        kind: 'loan',
+        principal: 500000,
+        annualRate: 0.049,
+        termMonths: 360,
+        startDate: '2024-01-01',
+        repaymentMethod: 'equal_interest',
+        monthlyPayment: 2653,
+        autoDeduct: false,
+        paidMonths: 0,
+        dueDay: 20,
+        nextDueDate: '2024-02-01',
+      },
+    });
+    renderTxList();
+
+    await user.click(screen.getByRole('button', { name: /记一笔/ }));
+    const select = screen.getByLabelText('支付账户') as HTMLSelectElement;
+    const optionTexts = Array.from(select.options).map((o) => o.textContent);
+    expect(optionTexts).toContain('微信零钱');
+    expect(optionTexts).not.toContain('房贷');
+  });
+
+  it('信用卡超额支出直接提示失败，不弹确认框', async () => {
+    const user = userEvent.setup();
+    store.addAccount({
+      name: '招行信用卡',
+      type: 'credit',
+      balance: 0,
+      meta: { kind: 'credit', limit: 5000, billDay: 5, dueDay: 23 },
+    });
+    renderTxList();
+
+    await user.click(screen.getByRole('button', { name: /记一笔/ }));
+    await user.type(screen.getByPlaceholderText('0.00'), '6000');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    // 超额直接 toast 失败
+    expect(await screen.findByText(/额度不足/)).toBeInTheDocument();
+    expect(screen.queryByText('确认新增吗')).not.toBeInTheDocument();
+    // 流水未新增，余额未变
+    expect(store.state.transactions).toHaveLength(0);
+    expect(store.state.accounts[0].balance).toBe(0);
+  });
+
+  it('新增转账：转入账户排除支付账户，两端余额联动', async () => {
+    const user = userEvent.setup();
+    const wallet = store.addAccount({ name: '微信零钱', type: 'wallet', balance: 1000 });
+    const cash = store.addAccount({ name: '现金', type: 'cash', balance: 500 });
+    renderTxList();
+
+    await user.click(screen.getByRole('button', { name: /记一笔/ }));
+    await user.selectOptions(screen.getByLabelText('流水类型'), 'transfer');
+    // 转入账户下拉出现，且排除支付账户（微信零钱）
+    const targetSelect = screen.getByLabelText('转入账户');
+    const targetOptions = Array.from(targetSelect.options).map((o) => o.textContent);
+    expect(targetOptions).toContain('现金');
+    expect(targetOptions).not.toContain('微信零钱');
+    await user.selectOptions(targetSelect, '现金');
+    await user.type(screen.getByPlaceholderText('0.00'), '300');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(await screen.findByText('已新增流水')).toBeInTheDocument();
+    // 联动：wallet 1000→700，cash 500→800
+    expect(store.getAccount(wallet.id)!.balance).toBe(700);
+    expect(store.getAccount(cash.id)!.balance).toBe(800);
+  });
+});

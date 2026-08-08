@@ -1777,6 +1777,70 @@ main {
   box-shadow: 0 0 0 3px rgba(23, 96, 77, 0.1);
 }
 
+/* ---------- 新增流水表单（复用编辑表单结构与样式） ---------- */
+.tx-add-btn {
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--pine);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--pine);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tx-add-btn:hover {
+  background: var(--pine);
+  color: #f6f3e8;
+}
+
+.tx-add-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+/* 新增表单内的 input/select 与编辑表单保持一致 */
+.tx-add-form .form-row select,
+.tx-add-form .form-row input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: var(--font-body);
+  color: var(--ink);
+  background-color: var(--card);
+  outline: none;
+  min-height: 36px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.tx-add-form .form-row select {
+  padding-right: 32px;
+}
+
+.tx-add-form .form-row select:focus,
+.tx-add-form .form-row input:focus {
+  border-color: rgba(23, 96, 77, 0.55);
+  box-shadow: 0 0 0 3px rgba(23, 96, 77, 0.1);
+}
+
+.tx-add-form .form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
 .btn-primary-sm {
   padding: 6px 16px;
   font-size: 13px;
