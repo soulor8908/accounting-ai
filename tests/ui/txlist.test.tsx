@@ -188,3 +188,67 @@ describe('TxListView 编辑支付账户', () => {
     expect(await screen.findByText(/目标账户不能与支付账户相同/)).toBeInTheDocument();
   });
 });
+
+describe('TxListView 贷款流水不可编辑', () => {
+  beforeEach(() => {
+    cleanup();
+    store.clearAll();
+  });
+
+  it('贷款还款流水（对手方为贷款账户）不显示编辑按钮', async () => {
+    const wallet = store.addAccount({ name: '微信零钱', type: 'wallet', balance: 100000 });
+    const loan = store.addAccount({
+      name: '房贷',
+      type: 'loan',
+      balance: 500000,
+      meta: {
+        kind: 'loan',
+        principal: 500000,
+        annualRate: 0.049,
+        termMonths: 360,
+        startDate: '2024-01-01',
+        repaymentMethod: 'equal_interest',
+        monthlyPayment: 2653,
+        autoDeduct: false,
+        paidMonths: 0,
+        dueDay: 20,
+        nextDueDate: '2024-02-01',
+      },
+    });
+    const d = `${currentYM()}-20`;
+    store.applyTransaction({
+      type: 'repayment',
+      amount: 2653,
+      accountId: wallet.id,
+      relatedAccountId: loan.id,
+      category: '房贷月供',
+      description: '2月房贷',
+      date: d,
+    });
+
+    renderTxList();
+    const row = screen.getByText('2月房贷').closest('li')!;
+    // 还贷流水不开放编辑，只有删除
+    expect(within(row).queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: '删除' })).toBeInTheDocument();
+  });
+
+  it('资产账户与信用卡流水可编辑', async () => {
+    const wallet = store.addAccount({ name: '微信零钱', type: 'wallet', balance: 1000 });
+    const cc = store.addAccount({
+      name: '招行信用卡',
+      type: 'credit',
+      balance: 0,
+      meta: { kind: 'credit', limit: 30000, billDay: 5, dueDay: 23 },
+    });
+    const d = `${currentYM()}-15`;
+    store.applyTransaction({ type: 'expense', amount: 100, accountId: wallet.id, category: '餐饮', description: '午餐', date: d });
+    store.applyTransaction({ type: 'expense', amount: 500, accountId: cc.id, category: '购物', description: '信用卡消费', date: d });
+
+    renderTxList();
+    const walletRow = screen.getByText('午餐').closest('li')!;
+    const ccRow = screen.getByText('信用卡消费').closest('li')!;
+    expect(within(walletRow).getByRole('button', { name: '编辑' })).toBeInTheDocument();
+    expect(within(ccRow).getByRole('button', { name: '编辑' })).toBeInTheDocument();
+  });
+});

@@ -23,7 +23,15 @@ const SIGN: Record<TxType, string> = {
   adjustment: '±',
 };
 
-const EDITABLE_TYPES: TxType[] = ['income', 'expense', 'refund', 'adjustment'];
+/** 可编辑的账户类型：资产类 + 信用卡/分期。贷款流水由系统自动生成，不可编辑（避免破坏派生状态）。 */
+const EDITABLE_ACCOUNT_TYPES = new Set(['wallet', 'alipay', 'cash', 'debit', 'credit', 'installment']);
+
+/** 流水是否可编辑：主账户与对手方都不能是贷款账户 */
+function isTxEditable(t: Transaction): boolean {
+  const main = store.getAccount(t.accountId);
+  const related = t.relatedAccountId ? store.getAccount(t.relatedAccountId) : undefined;
+  return !!main && EDITABLE_ACCOUNT_TYPES.has(main.type) && (!related || EDITABLE_ACCOUNT_TYPES.has(related.type));
+}
 
 /** 当前月份（YYYY-MM），作为流水列表的默认筛选值 */
 function currentMonth(): string {
@@ -276,7 +284,7 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
               <SwipeableRow
                 actions={
                   <>
-                    <button type="button" className="act-edit" onClick={() => startEdit(t)}>编辑</button>
+                    {isTxEditable(t) && <button type="button" className="act-edit" onClick={() => startEdit(t)}>编辑</button>}
                     <button type="button" className="act-delete" onClick={() => onDelete(t)}>删除</button>
                   </>
                 }
@@ -301,7 +309,6 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
       </ul>
       <p className="meta">
         共 {txs.length} 笔。
-        {!EDITABLE_TYPES.length ? '' : ''}
       </p>
     </div>
   );
