@@ -41,12 +41,26 @@ interface EditState {
 
 export function TxListView({ onChanged }: { onChanged?: () => void }) {
   const [month, setMonth] = useState(currentMonth());
+  const [typeFilter, setTypeFilter] = useState<TxType | ''>('');
+  const [accountFilter, setAccountFilter] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [editing, setEditing] = useState<EditState | null>(null);
   const [tick, setTick] = useState(0);
 
   const txs = [...store.state.transactions]
     .filter((t) => !month || t.date.startsWith(month))
+    .filter((t) => !typeFilter || t.type === typeFilter)
+    .filter((t) => !accountFilter || t.accountId === accountFilter || t.relatedAccountId === accountFilter)
     .sort((a, b) => (b.date + (b.time ?? '')).localeCompare(a.date + (a.time ?? '')));
+
+  const advancedActive = Boolean(typeFilter || accountFilter);
+  const hasAnyFilter = Boolean(month || typeFilter || accountFilter);
+
+  const clearAll = () => {
+    setMonth('');
+    setTypeFilter('');
+    setAccountFilter('');
+  };
 
   const accountName = (id?: string) => (id ? (store.getAccount(id)?.name ?? '?') : '');
 
@@ -105,12 +119,49 @@ export function TxListView({ onChanged }: { onChanged?: () => void }) {
       <h2>流水</h2>
       <div className="filter-row">
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="按月份筛选" />
-        {month && (
-          <button type="button" onClick={() => setMonth('')}>
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+          aria-controls="tx-filter-advanced"
+          className={advancedActive && !showAdvanced ? 'filter-active' : ''}
+        >
+          {showAdvanced ? '收起' : '更多筛选'}
+        </button>
+        {hasAnyFilter && (
+          <button type="button" onClick={clearAll}>
             清除
           </button>
         )}
       </div>
+      {showAdvanced && (
+        <div className="filter-row filter-advanced" id="tx-filter-advanced">
+          <select
+            aria-label="流水类型"
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as TxType | '')}
+          >
+            <option value="">全部类型</option>
+            {Object.entries(TYPE_LABEL).map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="支付方式"
+            value={accountFilter}
+            onChange={(e) => setAccountFilter(e.target.value)}
+          >
+            <option value="">全部支付方式</option>
+            {store.state.accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <ul className="tx-list">
         {txs.length === 0 && <li className="empty">暂无流水，去「对话」页记一笔吧</li>}
         {txs.map((t) => (

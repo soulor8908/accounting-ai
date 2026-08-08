@@ -1395,6 +1395,44 @@ main {
   color: var(--pine);
 }
 
+/* 流水筛选下拉：与同行的 month 输入共享外观 */
+.filter-row select {
+  padding: 10px 12px;
+  padding-right: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: var(--font-body);
+  color: var(--ink);
+  background-color: var(--card);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+.filter-row select:focus {
+  border-color: rgba(23, 96, 77, 0.55);
+  box-shadow: 0 0 0 3px rgba(23, 96, 77, 0.1);
+}
+
+/* "更多筛选" 在高级条件已生效但未展开时高亮提示 */
+.filter-row button.filter-active {
+  border-color: var(--pine);
+  color: var(--pine);
+}
+
+/* 高级筛选展开区：复用 filter-row 布局，窄屏自动换行 */
+.filter-advanced {
+  flex-wrap: wrap;
+}
+
+.filter-advanced select {
+  flex: 1 1 140px;
+  min-width: 140px;
+}
+
 .tx-desc {
   font-weight: 500;
   font-size: 14.5px;
