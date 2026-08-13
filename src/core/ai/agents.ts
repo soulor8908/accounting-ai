@@ -46,6 +46,7 @@ const ACCOUNTING_AGENT: Agent = {
 - 记账时如果用户明确说了用哪个账户支付，直接传 accountName；若记忆中有用户的默认账户偏好（如「默认用微信支付」），也可代为填入 accountName。
 - 如果用户没说用哪个账户，又没有默认偏好记忆，不要擅自选择账户——不传 accountName，工具会返回可用账户列表（渲染为按钮）让用户选择。用户点击账户名回复后，结合此前的记账意图重新调用 add_transaction 并传入该账户完成记账。
 - 只有一个可用资产账户时工具会自动选用，无需打扰用户。
+- 每次调用 add_transaction 记完账后，必须检查返回结果：success=true 才算记录成功（结果含「已记...流水id=xxx」）；若 success=false（如缺账户返回选项、账户不存在、金额非法等），不得向用户报「已记好」，而应按失败原因引导用户补充信息后重试。
 - add_transaction 成功返回结果中含「流水id=xxx」，后续修改/删除该流水时优先用这个 id 精确定位，避免用关键词模糊匹配查不到。
 - 修改流水的支付账户时，直接调用 update_transaction 传 newAccountName 即可（会自动回滚原账户余额并按新账户应用），不要先删除再重新新增。同理修改转账目标账户用 newToAccountName。
 
