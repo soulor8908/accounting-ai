@@ -97,7 +97,7 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
   void quotaVersion;
   const agents = listAgents();
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   // 已提示过的还款日贷款（同一次页面会话内不重复提示；跨会话靠「今日已还款」流水去重）
   const promptedLoanIds = useRef<Set<string>>(new Set());
   const quickInputs = quickInputStore.list();
@@ -107,12 +107,31 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // 打开聊天弹框后自动聚焦输入框
+  // textarea 自适应高度：内容变化时重算高度，超过上限出现滚动条
   useEffect(() => {
-    if (chatOpen) {
-      requestAnimationFrame(() => inputRef.current?.focus());
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, [input]);
+
+  // 打开聊天弹框：当前 active 会话若已有用户输入则新开一个全新会话；否则复用当前空会话。随后聚焦输入框
+  useEffect(() => {
+    if (!chatOpen) return;
+    const active = chatStore.getActive();
+    const hasUserInput = active ? active.messages.some((m) => m.role === 'user') : false;
+    if (hasUserInput) {
+      const s = chatStore.create();
+      setActiveSessionId(s.id);
+      setMessages([INITIAL_MESSAGE]);
+      onChanged();
+    } else if (active) {
+      chatStore.setActive(active.id);
+      setActiveSessionId(active.id);
+      setMessages(loadSessionMessages(active.id));
     }
-  }, [chatOpen]);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [chatOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 进入聊天时：若今日有到期贷款且尚未还款，自动以对话方式提示并给出付款账户选择
   useEffect(() => {
@@ -870,13 +889,21 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
               )}
             </div>
             <form className="chat-input" onSubmit={onSubmit}>
-              <input
+              <textarea
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={inputPlaceholder}
                 aria-label="记账输入"
                 disabled={loading}
+                rows={1}
+                onKeyDown={(e) => {
+                  // Enter 提交，Shift+Enter 换行；中文输入法 composing 时不触发
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    if (input.trim() && !loading) void send(input);
+                  }
+                }}
               />
               <button type="submit" disabled={loading || !input.trim()} aria-label="发送">
                 {loading ? <span className="chat-send-loading">…</span> : <Icon name="send" size={18} />}
