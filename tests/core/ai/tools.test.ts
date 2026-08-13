@@ -14,7 +14,7 @@ function seed() {
 }
 
 describe('AI tools 定义', () => {
-  it('包含 16 个工具', () => {
+  it('包含 17 个工具', () => {
     const names = AI_TOOLS.map((t) => t.function.name);
     expect(names).toEqual([
       'add_transaction',
@@ -27,6 +27,7 @@ describe('AI tools 定义', () => {
       'analyze_trends',
       'analyze_anomalies',
       'query_upcoming_payments',
+      'query_loan_schedule',
       'add_account',
       'list_accounts',
       'list_memories',
@@ -377,5 +378,69 @@ describe('executeTool - analyze_anomalies', () => {
     expect(r.success).toBe(true);
     expect(r.result).toContain('异常');
     expect(r.result).toContain('餐饮');
+  });
+});
+
+describe('executeTool - query_loan_schedule', () => {
+  beforeEach(seed);
+
+  it('无贷款时返回提示', () => {
+    const r = executeTool({ name: 'query_loan_schedule', arguments: {} });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('暂无贷款');
+  });
+
+  it('返回贷款分期明细：本金/月供/剩余期数/剩余本金/各期本金利息', () => {
+    store.addAccount({
+      name: '房贷', type: 'loan', balance: 120000,
+      meta: {
+        kind: 'loan', principal: 120000, annualRate: 0.06, termMonths: 12,
+        startDate: '2026-06-15', repaymentMethod: 'equal_principal',
+        monthlyPayment: 10600, autoDeduct: false, paidMonths: 0, dueDay: 15, nextDueDate: '2026-07-15',
+      },
+    });
+    const r = executeTool({ name: 'query_loan_schedule', arguments: {} });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('房贷');
+    expect(r.result).toContain('等额本金');
+    expect(r.result).toContain('本金 ¥120,000.00');
+    expect(r.result).toContain('月供 ¥10,600.00');
+    expect(r.result).toContain('剩余 12 期');
+    expect(r.result).toContain('剩余本金 ¥120,000.00');
+    expect(r.result).toContain('第1期 2026-07-15');
+    expect(r.result).toContain('本金 ¥10,000.00/利息 ¥600.00');
+  });
+
+  it('按 loanName 筛选，匹配不到时失败', () => {
+    store.addAccount({
+      name: '房贷', type: 'loan', balance: 120000,
+      meta: {
+        kind: 'loan', principal: 120000, annualRate: 0.06, termMonths: 12,
+        startDate: '2026-06-15', repaymentMethod: 'equal_principal',
+        monthlyPayment: 10600, autoDeduct: false, paidMonths: 0, dueDay: 15, nextDueDate: '2026-07-15',
+      },
+    });
+    const hit = executeTool({ name: 'query_loan_schedule', arguments: { loanName: '房' } });
+    expect(hit.success).toBe(true);
+    expect(hit.result).toContain('房贷');
+    const miss = executeTool({ name: 'query_loan_schedule', arguments: { loanName: '车贷' } });
+    expect(miss.success).toBe(false);
+    expect(miss.result).toContain('没找到贷款');
+  });
+
+  it('已还期数后只列出剩余各期', () => {
+    store.addAccount({
+      name: '房贷', type: 'loan', balance: 110000,
+      meta: {
+        kind: 'loan', principal: 120000, annualRate: 0.06, termMonths: 12,
+        startDate: '2026-06-15', repaymentMethod: 'equal_principal',
+        monthlyPayment: 10550, autoDeduct: false, paidMonths: 1, dueDay: 15, nextDueDate: '2026-08-15',
+      },
+    });
+    const r = executeTool({ name: 'query_loan_schedule', arguments: {} });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('已还 1 期，剩余 11 期');
+    expect(r.result).toContain('第2期 2026-08-15');
+    expect(r.result).not.toContain('第1期 2026-07-15');
   });
 });

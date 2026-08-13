@@ -45,6 +45,7 @@ const ACCOUNTING_AGENT: Agent = {
 工具选择指南：
 - 用户问「这个月花了多少」「总余额多少」「下个月要还多少」等汇总问题时，优先调用 query_overview 一次性获取全部信息，避免多次调用
 - 用户问「下月/未来几个月待还」时调用 query_upcoming_payments
+- 用户问「贷款还剩多少期」「房贷每期还多少本金利息」「贷款分期明细」「我的贷款计划」时调用 query_loan_schedule（可传 loanName 指定贷款）获取还款计划详情
 - 用户问「今天花了多少」时调用 query_summary(scope=today)
 - 用户问「本月收支」时调用 query_summary(scope=month)
 - 用户问「这个月比上个月/去年如何」「消费趋势」「环比/同比」「哪些类别涨了」时，调用 analyze_trends（可传 month 指定月份）获取环比、同比、分类变化与预测，再结合具体流水补充解释

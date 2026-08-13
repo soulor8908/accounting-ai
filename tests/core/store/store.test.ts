@@ -414,6 +414,51 @@ describe('待还提醒', () => {
   });
 });
 
+describe('getLoansDueToday - 今日到期贷款', () => {
+  const DUE = '2026-07-15';
+  function seedLoan(store: Store, nextDueDate: string, balance = 120000) {
+    return store.addAccount({
+      name: '房贷', type: 'loan', balance,
+      meta: {
+        kind: 'loan', principal: 120000, annualRate: 0.06, termMonths: 12,
+        startDate: '2026-06-15', repaymentMethod: 'equal_interest',
+        monthlyPayment: 10327.93, autoDeduct: false, paidMonths: 0, dueDay: 15, nextDueDate,
+      },
+    });
+  }
+
+  it('nextDueDate 命中今日即返回', () => {
+    const store = makeStore();
+    seedAccounts(store);
+    seedLoan(store, DUE);
+    const due = store.getLoansDueToday(DUE);
+    expect(due).toHaveLength(1);
+    expect(due[0].name).toBe('房贷');
+  });
+
+  it('nextDueDate 非今日不返回', () => {
+    const store = makeStore();
+    seedAccounts(store);
+    seedLoan(store, '2026-08-15');
+    expect(store.getLoansDueToday(DUE)).toHaveLength(0);
+  });
+
+  it('已结清（余额为 0）不返回', () => {
+    const store = makeStore();
+    seedAccounts(store);
+    seedLoan(store, DUE, 0);
+    expect(store.getLoansDueToday(DUE)).toHaveLength(0);
+  });
+
+  it('注销的贷款不返回', () => {
+    const store = makeStore();
+    seedAccounts(store);
+    const loan = seedLoan(store, DUE);
+    store.archiveAccount(loan.id);
+    expect(store.getLoansDueToday(DUE)).toHaveLength(0);
+  });
+});
+
 describe('周期性记账', () => {
   it('每月10号规则 → 补生成缺失月份', () => {
     const store = makeStore();

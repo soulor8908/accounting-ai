@@ -4,7 +4,7 @@ import { getEffectiveConfig, isTrialAvailable, isUsingBuiltinConfig } from '../c
 import { getDailyTrialLimit, getTrialRemaining, hasTrialQuota, recordTrialUsage } from '../core/ai/trialQuota';
 import type { ChatMessage as AIMessage } from '../core/ai/client';
 import { extractHabit } from '../core/ai/habits';
-import type { Account, Transaction } from '../core/types';
+import type { Account, LoanMeta, Transaction } from '../core/types';
 import {
   AMOUNT_PLACEHOLDER,
   findPlaceholderRange,
@@ -24,6 +24,8 @@ interface ChatMessage {
   options?: string[];
   /** 流式输出中 */
   streaming?: boolean;
+  /** 还款日提示：点击 options 中的付款账户名触发还款，'暂不记录' 跳过。瞬态字段不入库 */
+  repay?: { loanId: string };
 }
 
 const INITIAL_MESSAGE: ChatMessage = { role: 'ai', text: '你好，我是记账助手。直接说「吃午饭25」就能记账，也可以问我「这个月花了多少」。' };
@@ -42,8 +44,8 @@ function fromRecord(r: ChatMessageRecord): ChatMessage {
 
 /** 把当前 UI 消息列表写入会话（空列表不写，保留 welcome 为虚拟消息） */
 function persistSession(sessionId: string, messages: ChatMessage[]): void {
-  // 过滤掉纯 welcome 的初始消息（避免历史里堆积 greet）
-  const real = messages.filter((m) => !(m === INITIAL_MESSAGE));
+  // 过滤掉纯 welcome 的初始消息（避免历史里堆积 greet）与还款提示瞬态消息（不入库）
+  const real = messages.filter((m) => m !== INITIAL_MESSAGE && !m.repay);
   chatStore.setMessages(sessionId, real.map(toRecord));
 }
 
@@ -96,6 +98,8 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
   const agents = listAgents();
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 已提示过的还款日贷款（同一次页面会话内不重复提示；跨会话靠「今日已还款」流水去重）
+  const promptedLoanIds = useRef<Set<string>>(new Set());
   const quickInputs = quickInputStore.list();
 
   useEffect(() => {
@@ -108,6 +112,35 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
     if (chatOpen) {
       requestAnimationFrame(() => inputRef.current?.focus());
     }
+  }, [chatOpen]);
+
+  // 进入聊天时：若今日有到期贷款且尚未还款，自动以对话方式提示并给出付款账户选择
+  useEffect(() => {
+    if (!chatOpen) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const dueLoans = store.getLoansDueToday(today);
+    if (dueLoans.length === 0) return;
+    const assetTypes = ['wallet', 'alipay', 'cash', 'debit'];
+    const newPrompts: ChatMessage[] = [];
+    for (const loan of dueLoans) {
+      if (promptedLoanIds.current.has(loan.id)) continue;
+      // 今日已还款则不再提示
+      const repaidToday = store.state.transactions.some(
+        (t) => t.type === 'repayment' && t.relatedAccountId === loan.id && t.date === today,
+      );
+      if (repaidToday) continue;
+      promptedLoanIds.current.add(loan.id);
+      const meta = loan.meta as LoanMeta;
+      const payAccounts = store.state.accounts.filter((a) => assetTypes.includes(a.type) && !a.archived);
+      const options = payAccounts.length > 0 ? [...payAccounts.map((a) => a.name), '暂不记录'] : ['暂不记录'];
+      const text =
+        payAccounts.length > 0
+          ? `今天是你的「${loan.name}」还款日，本期应还 ¥${formatMoney(meta.monthlyPayment)}。要记录这笔还款吗？选择付款账户：`
+          : `今天是你的「${loan.name}」还款日，本期应还 ¥${formatMoney(meta.monthlyPayment)}。暂无可用付款账户，添加资产账户后再来记录吧。`;
+      newPrompts.push({ role: 'ai', text, status: 'ai', options, repay: { loanId: loan.id } });
+    }
+    if (newPrompts.length === 0) return;
+    setMessages((ms) => [...ms, ...newPrompts]);
   }, [chatOpen]);
 
   // 切换会话
@@ -195,6 +228,59 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
       return copy;
     });
     onChanged();
+  };
+
+  /** 还款提示结果回填：移除瞬态提示气泡，追加一条用户消息 + 一条 AI 结果消息并落库 */
+  const resolveRepayPrompt = (loanId: string, userText: string, aiText: string, status: ChatMessage['status']) => {
+    setMessages((ms) => {
+      const without = ms.filter((m) => !(m.repay?.loanId === loanId));
+      const next: ChatMessage[] = [...without, { role: 'user', text: userText }, { role: 'ai', text: aiText, status }];
+      persistSession(activeSessionId, next);
+      return next;
+    });
+    onChanged();
+  };
+
+  /** 点击还款提示中的付款账户：执行还款（扣账户余额、冲减贷款本金、推进下期）；'暂不记录' 跳过 */
+  const handleRepayOption = (loanId: string, option: string) => {
+    if (loading) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const loan = store.getAccount(loanId);
+    if (!loan || loan.meta?.kind !== 'loan') {
+      resolveRepayPrompt(loanId, '记录还款', '该贷款已不存在，无法记录。', 'error');
+      return;
+    }
+    if (option === '暂不记录') {
+      resolveRepayPrompt(loanId, '暂不记录', `好的，已跳过「${loan.name}」本期还款。需要时随时告诉我。`, 'ok');
+      return;
+    }
+    const meta = loan.meta as LoanMeta;
+    const acc = store
+      .resolveAccounts(option)
+      .find((a) => ['wallet', 'alipay', 'cash', 'debit'].includes(a.type) && !a.archived);
+    if (!acc) {
+      resolveRepayPrompt(loanId, `用${option}还款`, `没找到可用的付款账户「${option}」。`, 'error');
+      return;
+    }
+    try {
+      const { tx, warnings } = store.applyTransaction({
+        type: 'repayment',
+        amount: meta.monthlyPayment,
+        accountId: acc.id,
+        relatedAccountId: loan.id,
+        date: today,
+        category: '还款',
+        description: `${loan.name} 还款`,
+      });
+      const afterAcc = store.getAccount(acc.id);
+      const afterLoan = store.getAccount(loan.id);
+      let text = `已记录还款 ¥${formatMoney(tx.amount)}（${acc.name} → ${loan.name}）。${acc.name} 余额 ¥${formatMoney(afterAcc?.balance ?? 0)}，${loan.name} 剩余本金 ¥${formatMoney(afterLoan?.balance ?? 0)}。`;
+      if (warnings.length > 0) text += ` ⚠️ ${warnings.join('；')}`;
+      resolveRepayPrompt(loanId, `用${acc.name}还${loan.name}`, text, 'ok');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '记录失败';
+      resolveRepayPrompt(loanId, `用${acc.name}还款`, `⚠️ ${msg}`, 'error');
+    }
   };
 
   const send = async (text: string) => {
@@ -715,7 +801,15 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
                   {m.options && (
                     <div className="quick-options">
                       {m.options.map((o) => (
-                        <button key={o} type="button" disabled={loading} onClick={() => void send(o)}>
+                        <button
+                          key={o}
+                          type="button"
+                          disabled={loading}
+                          onClick={() => {
+                            if (m.repay) handleRepayOption(m.repay.loanId, o);
+                            else void send(o);
+                          }}
+                        >
                           {o}
                         </button>
                       ))}

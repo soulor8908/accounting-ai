@@ -5,10 +5,11 @@
 import { formatMoney } from '../engine/engine';
 import { analyzeTrends, formatTrendReport } from '../analytics/trends';
 import { detectAnomalies, formatAnomalyReport } from '../analytics/anomaly';
+import { calcTotalInterest, generateLoanSchedule } from '../finance/loan';
 import { store, memoryStore } from '../../ui/appState';
 import { ValidationError } from '../store/store';
 import type { MemoryCategory } from '../store/memory';
-import type { Account, AccountType, InstallmentPlan, LoanMeta, RecurringRule, Transaction, TxType } from '../types';
+import type { Account, AccountType, InstallmentPlan, LoanMeta, RecurringRule, RepaymentMethod, Transaction, TxType } from '../types';
 
 export interface ToolCall {
   name: string;
@@ -177,6 +178,19 @@ export const AI_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'query_loan_schedule',
+      description: '查询贷款的分期/还款计划详情：本金、年利率、期数、还款方式、月供、已还期数、剩余期数、下期还款日、剩余本金、总利息，以及剩余各期的还款日/本金/利息。用户问「房贷还剩多少期」「贷款每期还多少本金利息」「贷款分期明细」「我的贷款计划」时调用，避免只凭账户余额臆测。',
+      parameters: {
+        type: 'object',
+        properties: {
+          loanName: { type: 'string', description: '贷款账户名（可选，不传返回全部贷款）' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'add_account',
       description: '添加新账户',
       parameters: {
@@ -313,6 +327,8 @@ export function executeTool(call: ToolCall): ToolResult {
         return execAnalyzeAnomalies(call.arguments);
       case 'query_upcoming_payments':
         return execQueryUpcomingPayments(call.arguments);
+      case 'query_loan_schedule':
+        return execQueryLoanSchedule(call.arguments);
       case 'add_account':
         return execAddAccount(call.arguments);
       case 'list_accounts':
@@ -627,6 +643,46 @@ function execQueryUpcomingPayments(args: Record<string, unknown>): ToolResult {
     lines.push(`合计：¥${formatMoney(grandTotal)}`);
   }
   return { name: 'query_upcoming_payments', result: lines.join('\n'), success: true };
+}
+
+const REPAYMENT_METHOD_LABEL: Record<RepaymentMethod, string> = {
+  equal_interest: '等额本息',
+  equal_principal: '等额本金',
+  interest_only: '先息后本',
+};
+
+/** 贷款分期/还款计划详情：聚合元数据 + 用 generateLoanSchedule 重算剩余各期本金利息 */
+function execQueryLoanSchedule(args: Record<string, unknown>): ToolResult {
+  const loanName = args.loanName as string | undefined;
+  let loans = store.state.accounts.filter((a: Account) => a.meta?.kind === 'loan' && !a.archived);
+  if (loans.length === 0) return { name: 'query_loan_schedule', result: '暂无贷款账户', success: true };
+  if (loanName) {
+    loans = store.resolveAccounts(loanName).filter((a: Account) => a.meta?.kind === 'loan');
+    if (loans.length === 0) return { name: 'query_loan_schedule', result: `没找到贷款「${loanName}」`, success: false };
+  }
+  const lines: string[] = [];
+  for (const acc of loans) {
+    const meta = acc.meta as LoanMeta;
+    const schedule = generateLoanSchedule(meta.principal, meta.annualRate, meta.termMonths, meta.repaymentMethod, meta.startDate);
+    const remainingTerms = Math.max(0, meta.termMonths - meta.paidMonths);
+    const totalInterest = calcTotalInterest(schedule);
+    lines.push(
+      `【${acc.name}】${REPAYMENT_METHOD_LABEL[meta.repaymentMethod]}，本金 ¥${formatMoney(meta.principal)}，年利率 ${(meta.annualRate * 100).toFixed(2)}%，共 ${meta.termMonths} 期，月供 ¥${formatMoney(meta.monthlyPayment)}`,
+    );
+    lines.push(
+      `已还 ${meta.paidMonths} 期，剩余 ${remainingTerms} 期，下期还款日 ${meta.nextDueDate}，剩余本金 ¥${formatMoney(acc.balance)}，总利息 ¥${formatMoney(totalInterest)}`,
+    );
+    const upcoming = schedule.filter((it) => it.month > meta.paidMonths).slice(0, 12);
+    if (upcoming.length > 0) {
+      const detail = upcoming
+        .map((it) => `第${it.month}期 ${it.date} 还 ¥${formatMoney(it.payment)}（本金 ¥${formatMoney(it.principal)}/利息 ¥${formatMoney(it.interest)}）`)
+        .join('；');
+      lines.push(`剩余还款计划：${detail}${remainingTerms > upcoming.length ? ` …（共 ${remainingTerms} 期）` : ''}`);
+    } else if (remainingTerms === 0) {
+      lines.push('剩余还款计划：已全部结清');
+    }
+  }
+  return { name: 'query_loan_schedule', result: lines.join('\n'), success: true };
 }
 
 function execAddAccount(args: Record<string, unknown>): ToolResult {

@@ -813,6 +813,13 @@ export class Store {
     return items.sort((a, b) => a.date.localeCompare(b.date));
   }
 
+  /** 今日到期需还款的贷款：nextDueDate === today 且仍有未还本金、未注销 */
+  getLoansDueToday(today: string): Account[] {
+    return this.state.accounts.filter(
+      (a) => !a.archived && a.meta?.kind === 'loan' && a.balance > 0 && (a.meta as LoanMeta).nextDueDate === today,
+    );
+  }
+
   /** 计算贷款在某月的所有应还期号及日期 */
   private loanDueDatesForMonth(meta: LoanMeta, month: string): Array<{ k: number; date: string }> {
     const [sy, sm] = meta.startDate.split('-').map(Number).slice(0, 2) as [number, number];

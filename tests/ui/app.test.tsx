@@ -70,4 +70,58 @@ describe('App 冒烟', () => {
     expect(reloaded.load()).toBe(true);
     expect(reloaded.state.accounts.some((a) => a.name === '现金')).toBe(true);
   });
+
+  it('还款日进入聊天自动提示并支持选账户还款', async () => {
+    const user = userEvent.setup();
+    const today = new Date().toISOString().slice(0, 10);
+    store.addAccount({ name: '微信零钱', type: 'wallet', balance: 50000 });
+    store.addAccount({
+      name: '房贷', type: 'loan', balance: 120000,
+      meta: {
+        kind: 'loan', principal: 120000, annualRate: 0.06, termMonths: 12,
+        startDate: '2026-06-15', repaymentMethod: 'equal_interest',
+        monthlyPayment: 10327.93, autoDeduct: false, paidMonths: 0, dueDay: 15, nextDueDate: today,
+      },
+    });
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: '对话' }));
+    await user.click(screen.getByRole('button', { name: /输入消息.*记账/ }));
+
+    // 进入聊天即出现还款日提示与付款账户选项
+    expect(await screen.findByText(/今天是你的「房贷」还款日/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '微信零钱' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '暂不记录' })).toBeInTheDocument();
+
+    // 选择付款账户 → 添加还款流水、扣减账户余额、冲减贷款本金
+    await user.click(screen.getByRole('button', { name: '微信零钱' }));
+    expect(await screen.findByText(/已记录还款/)).toBeInTheDocument();
+    expect(store.state.transactions.some((t) => t.type === 'repayment')).toBe(true);
+
+    const loan = store.state.accounts.find((a) => a.name === '房贷')!;
+    const wallet = store.state.accounts.find((a) => a.name === '微信零钱')!;
+    expect(loan.balance).toBeLessThan(120000);
+    expect(wallet.balance).toBeCloseTo(50000 - 10327.93, 2);
+  });
+
+  it('还款提示选择「暂不记录」不产生流水', async () => {
+    const user = userEvent.setup();
+    const today = new Date().toISOString().slice(0, 10);
+    store.addAccount({ name: '微信零钱', type: 'wallet', balance: 50000 });
+    store.addAccount({
+      name: '房贷', type: 'loan', balance: 120000,
+      meta: {
+        kind: 'loan', principal: 120000, annualRate: 0.06, termMonths: 12,
+        startDate: '2026-06-15', repaymentMethod: 'equal_interest',
+        monthlyPayment: 10327.93, autoDeduct: false, paidMonths: 0, dueDay: 15, nextDueDate: today,
+      },
+    });
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: '对话' }));
+    await user.click(screen.getByRole('button', { name: /输入消息.*记账/ }));
+    await screen.findByText(/今天是你的「房贷」还款日/);
+    await user.click(screen.getByRole('button', { name: '暂不记录' }));
+    expect(await screen.findByText(/已跳过「房贷」本期还款/)).toBeInTheDocument();
+    expect(store.state.transactions).toHaveLength(0);
+    expect(store.state.accounts.find((a) => a.name === '微信零钱')!.balance).toBe(50000);
+  });
 });
