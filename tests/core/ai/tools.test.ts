@@ -85,6 +85,36 @@ describe('executeTool - add_transaction', () => {
     expect(r.success).toBe(true);
     expect(store.state.accounts[0].balance).toBe(6000);
   });
+
+  it('成功记账返回流水 id，便于后续精确修改/删除', () => {
+    const r = executeTool({
+      name: 'add_transaction',
+      arguments: { type: 'expense', amount: 25, description: '午饭' },
+    });
+    expect(r.result).toMatch(/流水id=/);
+  });
+
+  it('未指定账户且多个资产账户时返回账户选项让用户选，不记账', () => {
+    store.addAccount({ name: '支付宝', type: 'alipay', balance: 2000 });
+    const r = executeTool({
+      name: 'add_transaction',
+      arguments: { type: 'expense', amount: 25, description: '午饭' },
+    });
+    expect(r.success).toBe(false);
+    expect(r.result).toContain('请选择支付账户');
+    expect(r.options).toEqual(['微信零钱', '支付宝']);
+    expect(store.state.transactions).toHaveLength(0);
+  });
+
+  it('未指定账户但仅一个资产账户时自动选用', () => {
+    const r = executeTool({
+      name: 'add_transaction',
+      arguments: { type: 'expense', amount: 25, description: '午饭' },
+    });
+    expect(r.success).toBe(true);
+    expect(r.options).toBeUndefined();
+    expect(store.state.transactions[0].accountId).toBe(store.state.accounts[0].id);
+  });
 });
 
 describe('executeTool - list_transactions', () => {
@@ -178,6 +208,34 @@ describe('executeTool - update_transaction', () => {
     expect(r.success).toBe(true);
     expect(r.result).toContain('¥30');
     expect(store.state.transactions[0].amount).toBe(30);
+  });
+
+  it('按 id 修改支付账户：回滚原账户余额并按新账户应用，无需删除重建', () => {
+    store.addAccount({ name: '支付宝', type: 'alipay', balance: 2000 });
+    const wallet = store.state.accounts.find((a) => a.name === '微信零钱')!;
+    const alipay = store.state.accounts.find((a) => a.name === '支付宝')!;
+    const add = executeTool({ name: 'add_transaction', arguments: { type: 'expense', amount: 100, description: '午饭', accountName: '微信零钱' } });
+    const id = (add.result.match(/流水id=(\S+)/) || [])[1].replace(/[)）]/g, '');
+    expect(wallet.balance).toBe(900);
+    expect(alipay.balance).toBe(2000);
+
+    const r = executeTool({ name: 'update_transaction', arguments: { id, newAccountName: '支付宝' } });
+    expect(r.success).toBe(true);
+    expect(r.result).toContain('支付账户改为「支付宝」');
+    // 原账户回滚、新账户扣减
+    expect(wallet.balance).toBe(1000);
+    expect(alipay.balance).toBe(1900);
+    // 流水仍为一条，accountId 已切换
+    expect(store.state.transactions).toHaveLength(1);
+    expect(store.state.transactions[0].accountId).toBe(alipay.id);
+  });
+
+  it('newAccountName 指向不存在的账户时失败', () => {
+    const add = executeTool({ name: 'add_transaction', arguments: { type: 'expense', amount: 100, description: '午饭' } });
+    const id = (add.result.match(/流水id=(\S+)/) || [])[1].replace(/[)）]/g, '');
+    const r = executeTool({ name: 'update_transaction', arguments: { id, newAccountName: '不存在的账户' } });
+    expect(r.success).toBe(false);
+    expect(r.result).toContain('没找到账户');
   });
 });
 

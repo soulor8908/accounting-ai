@@ -386,7 +386,9 @@ export function ChatView({ onChanged, onNavigateToSettings }: { onChanged: () =>
               copy[copy.length - 1] = {
                 role: 'ai',
                 text: result.result,
-                status: result.success ? 'ok' : 'error',
+                // 有 options（如待选账户）时显示为普通 AI 气泡而非错误
+                status: result.success ? 'ok' : result.options ? 'ai' : 'error',
+                options: result.options,
               };
             }
             persistSession(activeSessionId, copy);

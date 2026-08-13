@@ -20,6 +20,8 @@ export interface ToolResult {
   name: string;
   result: string;
   success: boolean;
+  /** 需要用户进一步选择时附带选项（如未指定支付账户时列出可用账户），由 UI 渲染为按钮 */
+  options?: string[];
 }
 
 /** OpenAI 兼容的 function 定义 */
@@ -39,7 +41,7 @@ export const AI_TOOLS = [
           },
           amount: { type: 'number', description: '金额' },
           description: { type: 'string', description: '描述，如"午饭""工资"' },
-          accountName: { type: 'string', description: '账户名（可选，不填自动选择）' },
+          accountName: { type: 'string', description: '支付/入账账户名。不传时若有默认偏好可代填；无偏好则不传，工具会返回可用账户列表让用户选择' },
           toAccountName: { type: 'string', description: '转账/还款目标账户名' },
           date: { type: 'string', description: '日期 YYYY-MM-DD（可选，默认今天）' },
         },
@@ -82,16 +84,18 @@ export const AI_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'update_transaction',
-      description: '编辑流水记录（修改描述/金额/日期/分类）',
+      description: '编辑流水记录（修改描述/金额/日期/分类/支付账户/目标账户）。修改支付账户时直接传 newAccountName，无需删除后重新新增。优先用 add_transaction 返回的 id 精确定位。',
       parameters: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: '流水ID（可选）' },
+          id: { type: 'string', description: '流水ID（可选，优先使用 add_transaction 返回的 id）' },
           descriptionKeyword: { type: 'string', description: '描述关键词（可选，用于模糊查找）' },
           newDescription: { type: 'string', description: '新描述' },
           newAmount: { type: 'number', description: '新金额' },
           newDate: { type: 'string', description: '新日期 YYYY-MM-DD' },
           newCategory: { type: 'string', description: '新分类' },
+          newAccountName: { type: 'string', description: '新支付/入账账户名（修改支付账户时使用，会自动回滚原账户余额并按新账户应用）' },
+          newToAccountName: { type: 'string', description: '新转账/还款目标账户名' },
         },
       },
     },
@@ -362,7 +366,7 @@ function execAddTransaction(args: Record<string, unknown>): ToolResult {
     return { name: 'add_transaction', result: '还没有任何账户，请先添加账户', success: false };
   }
 
-  // 查找账户
+  // 查找账户：用户指定则解析；未指定时若有多个资产账户则返回列表让用户选，仅一个时自动选用
   let accountId: string;
   if (accountName) {
     const matches = store.resolveAccounts(accountName);
@@ -371,11 +375,14 @@ function execAddTransaction(args: Record<string, unknown>): ToolResult {
     }
     accountId = matches[0].id;
   } else {
-    // 自动选择第一个资产账户
     const assetTypes = ['wallet', 'alipay', 'cash', 'debit'];
-    const acc = store.state.accounts.find((a: Account) => assetTypes.includes(a.type));
-    if (!acc) return { name: 'add_transaction', result: '没有可用的资产账户', success: false };
-    accountId = acc.id;
+    const payAccounts = store.state.accounts.filter((a: Account) => assetTypes.includes(a.type) && !a.archived);
+    if (payAccounts.length === 0) return { name: 'add_transaction', result: '没有可用的资产账户', success: false };
+    if (payAccounts.length === 1) {
+      accountId = payAccounts[0].id;
+    } else {
+      return { name: 'add_transaction', result: '请选择支付账户：', options: payAccounts.map((a) => a.name), success: false };
+    }
   }
 
   let relatedAccountId: string | undefined;
@@ -398,7 +405,7 @@ function execAddTransaction(args: Record<string, unknown>): ToolResult {
   });
 
   const acc = store.getAccount(accountId);
-  let result = `已记${TX_TYPE_LABEL[type]} ¥${formatMoney(tx.amount)}（${description}），「${acc?.name ?? '?'}」余额 ¥${formatMoney(acc?.balance ?? 0)}`;
+  let result = `已记${TX_TYPE_LABEL[type]} ¥${formatMoney(tx.amount)}（${description}），「${acc?.name ?? '?'}」余额 ¥${formatMoney(acc?.balance ?? 0)}（流水id=${tx.id}）`;
   if (warnings.length > 0) result += `。⚠️ ${warnings.join('；')}`;
   return { name: 'add_transaction', result, success: true };
 }
@@ -484,11 +491,24 @@ function execUpdateTransaction(args: Record<string, unknown>): ToolResult {
   if (args.newAmount !== undefined) patch.amount = Number(args.newAmount);
   if (args.newDate !== undefined) patch.date = args.newDate;
   if (args.newCategory !== undefined) patch.category = args.newCategory;
+  if (args.newAccountName !== undefined) {
+    const matches = store.resolveAccounts(args.newAccountName as string);
+    if (matches.length === 0) return { name: 'update_transaction', result: `没找到账户「${args.newAccountName}」`, success: false };
+    patch.accountId = matches[0].id;
+  }
+  if (args.newToAccountName !== undefined) {
+    const matches = store.resolveAccounts(args.newToAccountName as string);
+    if (matches.length === 0) return { name: 'update_transaction', result: `没找到目标账户「${args.newToAccountName}」`, success: false };
+    patch.relatedAccountId = matches[0].id;
+  }
 
   const tx = store.updateTransaction(targetId, patch);
   if (!tx) return { name: 'update_transaction', result: `没找到ID为 ${targetId} 的流水`, success: false };
 
-  return { name: 'update_transaction', result: `已更新：${tx.date} ${tx.description || tx.category} ¥${formatMoney(tx.amount)}`, success: true };
+  const acc = store.getAccount(tx.accountId);
+  const parts = [`已更新：${tx.date} ${tx.description || tx.category} ¥${formatMoney(tx.amount)}`];
+  if (patch.accountId !== undefined) parts.push(`支付账户改为「${acc?.name ?? '?'}」（余额 ¥${formatMoney(acc?.balance ?? 0)}）`);
+  return { name: 'update_transaction', result: parts.join('，'), success: true };
 }
 
 function execQueryBalance(args: Record<string, unknown>): ToolResult {
